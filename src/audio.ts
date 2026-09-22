@@ -16,6 +16,10 @@ export class RideAudio {
   private tickPhase = 0;
   private birdT = 2;
 
+  get state(): string {
+    return this.ctx ? this.ctx.state : "off";
+  }
+
   start(): void {
     if (this.ctx) {
       if (this.ctx.state === "suspended") void this.ctx.resume();

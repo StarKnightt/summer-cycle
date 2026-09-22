@@ -113,6 +113,9 @@ window.__ride = {
   get time() {
     return t;
   },
+  get audio() {
+    return audio.state;
+  },
   setCam(mode: "chase" | "closeup" | "side") {
     chase.mode = mode;
   },

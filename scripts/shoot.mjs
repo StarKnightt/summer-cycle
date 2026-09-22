@@ -40,6 +40,8 @@ try {
   });
   await page.goto(`${URL}?autoplay=1${EXTRA ? "&" + EXTRA : ""}`, { waitUntil: "load" });
   await page.waitForFunction(() => window.__ride?.ready === true, null, { timeout: 90_000 });
+  // A click starts the Web Audio graph (exercises the synth path for errors).
+  await page.mouse.click(W / 2, H / 2);
   const t0 = await page.evaluate(() => window.__ride.time);
   const s0 = await page.evaluate(() => window.__ride.stats());
   console.log(`[gpu] ${s0.renderer}`);
@@ -58,6 +60,7 @@ try {
   await page.evaluate(() => window.__ride.setCam("side"));
   await page.waitForTimeout(600);
   await page.screenshot({ path: path.join(OUT, `${PREFIX}side.png`) });
+  console.log(`audio: ${await page.evaluate(() => window.__ride.audio)}`);
   const log = await page.evaluate(() => window.__ride.fpsLog);
   const avg = log.length ? log.reduce((a, b) => a + b, 0) / log.length : 0;
   console.log(`fps log: ${log.join(",")}  avg=${avg.toFixed(1)}`);

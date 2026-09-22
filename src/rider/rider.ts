@@ -166,8 +166,8 @@ export class Rider {
     // Seat post + saddle.
     this.add(beam(seatTop, SEAT, 0.014, CHROME, M.metal));
     const saddle = sphere(0.1, "#4a2e22", M.plain, 12, 8);
-    saddle.scale(0.85, 0.35, 1.3);
-    saddle.translate(SEAT.x, SEAT.y + 0.02, SEAT.z - 0.03);
+    saddle.scale(0.8, 0.32, 1.1);
+    saddle.translate(SEAT.x, SEAT.y + 0.0, SEAT.z - 0.06);
     this.add(saddle);
     // Rear rack + fender + chain guard.
     this.add(xf(box(0.16, 0.02, 0.36, CHROME, M.metal), 0, 0.78, 0.5));
@@ -283,6 +283,11 @@ export class Rider {
     this.skirt.rotation.x = 1.0;
     this.skirt.scale.set(1.1, 1, 1.05);
     b.add(this.skirt);
+    // Seat panel of the skirt: covers the hips / thigh roots seen from the chase camera.
+    const seat = sphere(0.16, NAVY, M.cloth, 16, 10);
+    seat.scale(1.12, 0.62, 1.05);
+    seat.translate(hip.x, hip.y - 0.05, hip.z + 0.02);
+    this.add(seat, b, rid);
 
     // Torso (leans forward from the hips).
     this.torso.position.copy(hip);
@@ -333,11 +338,12 @@ export class Rider {
       this.add(hl, this.head, ID.skin);
       const blush = sphere(0.022, "#f2a2a0", M.skin, 8, 6);
       blush.scale(1.2, 0.5, 0.3);
-      blush.translate(s * 0.07, -0.035, -0.105);
+      blush.translate(s * 0.068, -0.035, -0.094);
       this.add(blush, this.head, ID.skin);
     }
-    const mouth = box(0.025, 0.006, 0.01, "#9a4a44");
-    mouth.translate(0, -0.06, -0.118);
+    const mouth = sphere(0.012, "#b0524c", M.plain, 8, 4);
+    mouth.scale(1.2, 0.35, 0.3);
+    mouth.translate(0, -0.058, -0.112);
     this.add(mouth, this.head, ID.skin);
     // Hair: back shell, bangs, side locks, ponytail chain.
     const shell = sphere(0.14, HAIR, M.hair, 20, 14);

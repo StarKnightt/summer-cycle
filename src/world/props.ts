@@ -297,6 +297,23 @@ export function tree(kind: TreeKind, seed: number): Geo {
       blobs.push(leaf(c, cr * range(r, 0.42, 0.62), 0.65));
     }
     blobs.push(leaf(center, cr * 0.75, 0.6));
+    // Small leaf clumps scattered over the canopy surface: breaks the round silhouette into a
+    // leafy, jagged edge like painted background trees.
+    const surf: { c: THREE.Vector3; r: number }[] = [];
+    for (let i = 0; i < 46; i++) {
+      const u = r() * 2 - 1, a = r() * Math.PI * 2;
+      const s = Math.sqrt(1 - u * u);
+      const dir = V(s * Math.cos(a), u * 0.85 + 0.15, s * Math.sin(a)).normalize();
+      if (dir.y < -0.35) continue;
+      const rad = cr * (kind === "tall" ? 1.05 : 0.95) * range(r, 0.92, 1.08);
+      const c = center.clone().add(new THREE.Vector3(dir.x * rad, dir.y * rad * (kind === "tall" ? 1.15 : 0.82), dir.z * rad));
+      surf.push({ c, r: cr * range(r, 0.14, 0.24) });
+    }
+    for (const s of surf) {
+      const g = prep(blob(s.r, 1, 0.3, seed + s.c.x * 5 + s.c.z), LEAF[Math.floor(r() * LEAF.length)], M.foliage, 0);
+      g.translate(s.c.x, s.c.y, s.c.z);
+      blobs.push({ g, k: 0.75 });
+    }
     for (const b of blobs) {
       spherize(b.g, center, b.k, kind === "tall" ? 0.8 : 1.2);
       out.push(b.g);

@@ -121,13 +121,23 @@ function mergeSimple(parts: Geo[]): Geo {
 
 /** Butterfly: two wing quads hinged at x=0 (flapped + wandered in the vertex shader). */
 export function butterfly(): Geo {
-  const pos = [
-    // right wing (x > 0)
-    0, 0, -0.035, 0.075, 0, -0.05, 0.065, 0, 0.02, 0, 0, 0.03, 0.045, 0, 0.055,
-    // left wing
-    0, 0, -0.035, -0.075, 0, -0.05, -0.065, 0, 0.02, 0, 0, 0.03, -0.045, 0, 0.055,
-  ];
-  const idx = [0, 1, 2, 0, 2, 3, 3, 2, 4, 5, 7, 6, 5, 8, 7, 8, 9, 7];
+  // Each wing = rounded forewing lobe + smaller hindwing lobe, as fans from the body hinge.
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (const s of [1, -1]) {
+    for (const [cz, rx, rz, n] of [
+      [-0.012, 0.062, 0.042, 7],
+      [0.022, 0.042, 0.03, 6],
+    ] as const) {
+      const c = pos.length / 3;
+      pos.push(0, 0, cz);
+      for (let i = 0; i <= n; i++) {
+        const a = -Math.PI / 2 + (i / n) * Math.PI;
+        pos.push(s * Math.cos(a) * rx, 0, cz + Math.sin(a) * rz * (cz < 0 ? 1.1 : 1));
+      }
+      for (let i = 0; i < n; i++) idx.push(c, c + 1 + i, c + 2 + i);
+    }
+  }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);

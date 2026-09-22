@@ -96,7 +96,7 @@ vec3 toonT(vec3 base, vec3 N, vec3 wpos, float jitter, float paint, float rimAmt
   float sunSide = smoothstep(-0.3, 0.3, dot(N, uSunDir) + 0.2);
   col += uRimColor * base * rim * (0.25 + 0.75 * sunSide) * 0.9;
   col *= 1.0 + (br - 0.5) * 0.14 * paint;
-  return col;
+  return min(col, vec3(0.97));
 }
 vec3 toon(vec3 base, vec3 N, vec3 wpos, float jitter, float paint, float rimAmt, float soft){
   return toonT(base, N, wpos, jitter, paint, rimAmt, soft, uShadowTint);
@@ -251,7 +251,7 @@ void main(){
     base = mix(base, base * vec3(1.25, 1.2, 0.75), step(0.93, fl) * 0.6);
     paint = 1.6; rim = 0.0;
   } else if (mt == 12) {    // butterfly (bright, unshaded)
-    gColor = vec4(applyFog(base * 1.25, vWPos), 1.0);
+    gColor = vec4(applyFog(base * 0.92, vWPos), 1.0);
     gNormal = vec4(0.5, 0.5, uId / 32.0, 0.0);
     return;
   } else if (mt == 13) {    // stone

@@ -47,8 +47,8 @@ const HOUSES: HouseSpot[] = [
   { z: -60, w: 6.6, d: 6.0, floors: 2, shop: true, u: 7.4, ac: true, balcony: false, seed: 23 },
   { z: -74.5, w: 7.6, d: 6.8, floors: 2, u: 8.6, seed: 37 },
   { z: -91, w: 6.8, d: 6.2, floors: 1, u: 8.0, ac: true, seed: 41 },
-  { z: -330, w: 8.2, d: 7.0, floors: 2, u: 9.5, ac: true, seed: 53 },
-  { z: -346, w: 6.0, d: 5.4, floors: 1, u: 8.4, seed: 67 },
+  { z: -228, w: 8.2, d: 7.0, floors: 2, u: 9.5, ac: true, seed: 53 },
+  { z: -244, w: 6.0, d: 5.4, floors: 1, u: 8.4, seed: 67 },
   { z: -505, w: 7.4, d: 6.6, floors: 2, u: 9.0, seed: 79, ac: true },
 ];
 
@@ -68,7 +68,7 @@ const FENCES_LEFT: [number, number][] = [
 ];
 
 const GUARDRAIL_RIGHT: [number, number][] = [
-  [-196, -246],
+  [-160, -198],
   [-452, -486],
 ];
 
@@ -435,9 +435,9 @@ export function buildChunk(k: number): Chunk {
     const n = Math.round(len / 2);
     for (let i = 0; i <= n; i++) {
       const z = a - (i / n) * len;
-      infraG.push(xf(prep(new THREE.CylinderGeometry(0.06, 0.06, 0.85, 8), "#e9e8e2", M.metal), roadX(z) + 3.25, 0.42, z));
+      infraG.push(xf(prep(new THREE.CylinderGeometry(0.06, 0.06, 0.85, 8), "#c4c2ba", M.metal), roadX(z) + 3.25, 0.42, z));
     }
-    const rail = prep(new THREE.BoxGeometry(0.06, 0.32, len, 1, 2, Math.max(1, Math.round(len / 2))), "#f1f0ea", M.metal);
+    const rail = prep(new THREE.BoxGeometry(0.06, 0.32, len, 1, 2, Math.max(1, Math.round(len / 2))), "#cbc9c0", M.metal);
     rail.translate(3.18, 0.66, a - len / 2);
     infraG.push(shear(rail));
   }
@@ -481,11 +481,13 @@ export function buildChunk(k: number): Chunk {
     const u = BERM0 - Math.floor(range(r, 2, NROWS)) * ROW_P;
     addTree(pick(r, ["round", "tall", "bush"] as TreeKind[]), u, z, range(r, 0.8, 1.3));
   }
-  for (let i = 0; i < 10; i++) {
-    const z = range(r, z1, z0);
-    const u = range(r, uFar - 40, uFar - 260);
-    addTree(r() > 0.5 ? "round" : "cedar", u, z, range(r, 1.0, 1.6));
+  // Groves out in the far fields (farmstead windbreaks) so the horizon isn't a flat line.
+  for (let gi = 0; gi < 2; gi++) {
+    const gz = range(r, z1, z0);
+    const gu = range(r, uFar - 50, uFar - 240);
+    for (let i = 0; i < 9; i++) addTree(r() > 0.45 ? "round" : "cedar", gu + range(r, -14, 14), gz + range(r, -12, 12), range(r, 1.0, 1.7));
   }
+  for (let i = 0; i < 4; i++) addTree("round", range(r, uFar - 40, uFar - 260), range(r, z1, z0), range(r, 1.0, 1.5));
 
   // ---- grass, flowers, butterflies
   const grass = [newInst(), newInst(), newInst()];
@@ -543,7 +545,7 @@ export function buildChunk(k: number): Chunk {
     }
     for (let i = 0; i < 5; i++) {
       const z = p.z + range(r, -2.5, 2.5);
-      pushInst(flies, roadX(z) + p.u + range(r, -1, 1), range(r, 0.7, 1.5), z, r() * 6.28, range(r, 1.6, 2.1), undefined, pick(r, FLY));
+      pushInst(flies, roadX(z) + p.u + range(r, -1, 1), range(r, 0.7, 1.5), z, r() * 6.28, range(r, 1.2, 1.5), undefined, pick(r, FLY));
     }
     // Mossy boulder anchoring the patch (away from the road edge).
     if (r() > 0.35) {
@@ -554,7 +556,7 @@ export function buildChunk(k: number): Chunk {
   for (let i = 0; i < 10; i++) {
     const u = r() > 0.35 ? range(r, 3.2, 6.5) : range(r, -4.4, -3.0);
     const z = range(r, z1, z0);
-    pushInst(flies, roadX(z) + u, range(r, 0.55, 1.3), z, r() * 6.28, range(r, 1.5, 2.0), undefined, pick(r, FLY));
+    pushInst(flies, roadX(z) + u, range(r, 0.55, 1.3), z, r() * 6.28, range(r, 1.1, 1.4), undefined, pick(r, FLY));
   }
   // Scattered boulders in the meadow and at the foot of trees.
   for (let i = 0; i < 6; i++) {
