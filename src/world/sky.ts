@@ -123,6 +123,22 @@ function cumulus(size: number, tall: number, seed: number): THREE.BufferGeometry
     lobe(g, lx, ly, lz);
     parts.push(g);
   }
+  // Small bulges around the outer flanks so the vertical sides never read as flat walls.
+  for (let i = 0; i < 22; i++) {
+    let b = big[Math.floor(r() * big.length)];
+    for (let k = 0; k < 2; k++) {
+      const o = big[Math.floor(r() * big.length)];
+      if (Math.hypot(o.x, o.z) > Math.hypot(b.x, b.z)) b = o;
+    }
+    const out = Math.atan2(b.z, b.x) + range(r, -0.9, 0.9);
+    const u = range(r, -0.25, 0.4), s = Math.sqrt(1 - u * u);
+    const rad = b.rad * range(r, 0.2, 0.34);
+    const g = blob(rad, 1, 0.15, seed + 300 + i);
+    const lx = b.x + Math.cos(out) * s * b.rad * 0.9, ly = b.y + u * b.rad * 0.9, lz = b.z + Math.sin(out) * s * b.rad * 0.9;
+    g.translate(lx, ly, lz);
+    lobe(g, lx, ly, lz);
+    parts.push(g);
+  }
   const merged = mergeGeometries(parts, false)!;
   const p = merged.attributes.position;
   let ymin = Infinity, ymax = -Infinity;

@@ -131,7 +131,7 @@ function faceR(d: THREE.Vector3): number {
   const lower = smooth(-0.05, -0.8, d.y);
   r *= 1 - 0.155 * lower * Math.abs(d.x);
   r *= 1 - 0.16 * smooth(-0.2, -0.9, d.y) * Math.max(0, d.z);
-  r *= 1 + 0.06 * Math.exp(-(1 - d.dot(CHIN)) / 0.03);
+  r *= 1 + 0.09 * Math.exp(-(1 - d.dot(CHIN)) / 0.035);
   r *= 1 + 0.035 * (Math.exp(-(1 - d.dot(CHEEK_L)) / 0.05) + Math.exp(-(1 - d.dot(CHEEK_R)) / 0.05));
   return r;
 }
@@ -633,7 +633,7 @@ export class Rider {
     const seat = sphere(0.15, NAVY, M.cloth, 16, 10);
     seat.scale(1.05, 0.55, 1.0);
     seat.translate(hip.x, hip.y - 0.06, hip.z + 0.03);
-    this.add(seat, b, rid);
+    this.seatCover = this.add(seat, b, rid);
 
     // Torso (leans forward from the hips).
     this.torso.position.copy(hip);
@@ -731,11 +731,11 @@ export class Rider {
     }
     // Nose: a tiny flat-shaded wedge (catches one lit and one shaded facet, and a profile bump).
     const nose = new THREE.BufferGeometry();
-    const top = [0, 0.022, 0], l = [-0.009, -0.007, 0], r = [0.009, -0.007, 0], tip = [0, -0.005, 0.024];
+    const top = [0, 0.026, 0], l = [-0.011, -0.008, 0], r = [0.011, -0.008, 0], tip = [0, -0.006, 0.034];
     nose.setAttribute("position", new THREE.Float32BufferAttribute([...top, ...l, ...tip, ...top, ...tip, ...r, ...l, ...r, ...tip], 3));
     this.onHead(prep(nose, SKIN, M.skin), 0, -0.27, -0.002, ID.skin);
     // Short soft smile.
-    const mouth = prep(new THREE.TorusGeometry(0.015, 0.002, 3, 8, 1.1), "#8e3f3a", M.plain);
+    const mouth = prep(new THREE.TorusGeometry(0.019, 0.0034, 3, 8, 1.1), "#7a3230", M.plain);
     mouth.rotateZ(-Math.PI / 2 - 0.55);
     mouth.translate(0, 0.015, 0);
     mouth.scale(1, 1, 0.5);
@@ -838,8 +838,8 @@ export class Rider {
     for (let s = 0; s < 2; s++) {
       this.thigh.push(new Limb(b, [0.068, 0.066, 0.058, 0.05], SKIN, M.skin, ID.skin));
       this.shin.push(new Limb(b, [0.046, 0.05, 0.042, 0.03], SOCK, M.cloth, rid));
-      this.upperArm.push(new Limb(b, [0.041, 0.039, 0.034, 0.029], SKIN, M.skin, ID.skin));
-      this.foreArm.push(new Limb(b, [0.028, 0.032, 0.028, 0.022, 0.018], SKIN, M.skin, ID.skin));
+      this.upperArm.push(new Limb(b, [0.045, 0.041, 0.035, 0.029], SKIN, M.skin, ID.skin));
+      this.foreArm.push(new Limb(b, [0.028, 0.031, 0.026, 0.02, 0.016], SKIN, M.skin, ID.skin));
       const knee = mk(sphere(0.049, SKIN, M.skin, 12, 8), ID.skin);
       const elbow = mk(sphere(0.031, SKIN, M.skin, 10, 8), ID.skin);
       const footG = sphere(0.05, SHOE, M.plain, 10, 6);
@@ -907,6 +907,15 @@ export class Rider {
   }
   private fppOn = false;
 
+  /** Hide the skirt from the main view only (keeps its shadow) while the camera swoops in. */
+  setSkirtHidden(on: boolean): void {
+    for (const m of [this.skirt, this.seatCover]) {
+      if (on) m.layers.disable(0);
+      else m.layers.enable(0);
+    }
+  }
+  private seatCover!: THREE.Mesh;
+
   /** World-space eye point (between the eyes, slightly forward). */
   eyeWorld(out: THREE.Vector3): THREE.Vector3 {
     this.head.updateWorldMatrix(true, false);
@@ -960,7 +969,9 @@ export class Rider {
 
       const shoulder = toBody(this.torso, V(side * 0.165, 0.41, -0.01));
       const wrist = toBody(this.steer, this.wrists[i].clone());
-      ik(shoulder, wrist, 0.27, 0.25, V(side * 0.45, -0.8, 0.45).normalize(), mid);
+      // Segment lengths follow the reach so the elbow always keeps a relaxed ~18° bend.
+      const reach = shoulder.distanceTo(wrist) / (2 * Math.cos((9 * Math.PI) / 180));
+      ik(shoulder, wrist, reach * 1.04, reach * 0.96, V(side * 0.45, -0.8, 0.45).normalize(), mid);
       this.upperArm[i].set(shoulder, mid);
       this.foreArm[i].set(mid, wrist);
       this.elbows[i].position.copy(mid);

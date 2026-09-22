@@ -98,7 +98,7 @@ export class ChaseCam {
         hard = false;
         // Low chase: 1.5 m high, 4.2 m back, aimed 0.6 m right so she sits on the left third.
         tp = new THREE.Vector3(c.x + bx * 4.2 + cxr * (sway + 0.35), 1.5 + bob, c.z + bz * 4.2 + czr * (sway + 0.35));
-        tl = new THREE.Vector3(c.x + fx * 7 + cxr * 1.45, 1.25, c.z + fz * 7 + czr * 1.45);
+        tl = new THREE.Vector3(c.x + fx * 7 + cxr * 1.9, 1.25, c.z + fz * 7 + czr * 1.9);
     }
     if (!this.init || hard) {
       this.pos.copy(tp);
@@ -138,11 +138,14 @@ export class ChaseCam {
     this.qF.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), c.lean * 0.8 + Math.sin(c.crank) * 0.008 * c.pedaling));
 
     this.cam.position.lerpVectors(this.pos, this.eye, e);
+    // Arc up over her head mid-blend rather than flying through her back.
+    this.cam.position.y += Math.sin(Math.PI * e) * 0.45;
     this.cam.quaternion.slerpQuaternions(this.qT, this.qF, e);
     this.cam.fov = TPP_FOV + (FPP_FOV - TPP_FOV) * e;
     this.cam.near = TPP_NEAR + (FPP_NEAR - TPP_NEAR) * e;
     this.cam.updateProjectionMatrix();
     this.cam.updateMatrixWorld();
-    rider.setFirstPerson(e > 0.45);
+    rider.setFirstPerson(e > 0.12);
+    rider.setSkirtHidden(e > 0.3 && e < 0.97);
   }
 }

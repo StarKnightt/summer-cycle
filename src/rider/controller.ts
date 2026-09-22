@@ -8,8 +8,8 @@ const CRUISE = 6.0;
 const MAX = 10.5;
 const GEAR = 2.3; // wheel revolutions per crank revolution
 const BACK = 0.8; // walking the bike backward, m/s
-/** Opening frame: village + dark tree mass + pole in the right third, paddy mirror on the left. */
-const START_Z = 6;
+/** Opening frame: house cluster in the right third, big cumulus + paddy fence on the left. */
+const START_Z = -54;
 
 export class Controller {
   x = roadX(START_Z) - 0.9;
@@ -32,7 +32,11 @@ export class Controller {
   bumpImpulse = 0;
   private coastT = 0;
 
-  constructor(public autoplay: boolean) {}
+  constructor(public autoplay: boolean, startZ = START_Z) {
+    this.z = startZ;
+    this.x = roadX(startZ) - 0.9;
+    this.yaw = roadYaw(startZ);
+  }
 
   update(dt: number, input: Input, blocked: (x: number, z: number) => Contact): void {
     this.time += dt;

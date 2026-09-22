@@ -59,7 +59,7 @@ try {
         [0.5, "first_0.5s"], [1, "first_1.0s"], [5, "t05s"],
         [5.6, "@houses"], [6.4, "@paddy"], [7.2, "@chase"],
         [10, "t10s"], [15, "t15s"], [20, "t20s"], [25, "t25s"], [30, "t30s"], [35, "t35s"], [40, "t40s"],
-        [41, "@fpp"], [42, "fpp_a"], [46, "fpp_b"], [46.2, "@tpp"], [47.4, "fpp_back_tpp"],
+        [41, "@fpp"], [41.2, "fpp_blend_0.2"], [42, "fpp_a"], [46, "fpp_b"], [46.2, "@tpp"], [46.4, "tpp_blend_0.2"], [47.4, "fpp_back_tpp"],
       ];
   for (const [tt, name] of plan) {
     await at(tt);
@@ -85,7 +85,7 @@ try {
     await fs.mkdir(path.dirname(file), { recursive: true });
     await page.screenshot({ path: file, clip: { x: (W - w) / 2 + dx, y: (H - h) / 2 + dy, width: w, height: h } });
   };
-  for (const [m, n] of [["face", "face_front"], ["faceside", "face_side"], ["back", "face_back"]]) {
+  for (const [m, n] of [["face", "face_34"], ["faceside", "face_profile"], ["back", "face_back"]]) {
     await cam(m);
     await page.waitForTimeout(400);
     await crop(n, 1000, 1000);
@@ -99,7 +99,10 @@ try {
 
   // Collision: manual mode against an in-rail obstacle on the right edge.
   const obs = await page.evaluate(() => window.__ride.obstacles());
-  const target = obs.filter((o) => o.u > 2).sort((a, b) => b.z - a.z)[0];
+  // The post box (largest collider) is the head-on case the critic flagged.
+  const target = obs.filter((o) => o.u > 2).sort((a, b) => b.r - a.r)[0];
+  // Chunks ahead may report positions one loop (L = 640 m) away; bring it into the ride's range.
+  if (target) while (target.z < -640) target.z += 640;
   if (target) {
     const run = async (du, label, ms = 3500) => {
       await page.evaluate(([o, d]) => {
@@ -111,9 +114,10 @@ try {
     };
     // 1) Head-on: dead stop.
     let c = await run(-0.05, "headon");
-    const stopOk = c.speed < 0.3 && c.z > target.z;
-    console.log(`collision head-on: obstacle u=${target.u.toFixed(2)} z=${target.z.toFixed(1)} -> bike z=${c.z.toFixed(1)} speed=${c.speed.toFixed(2)} ${stopOk ? "PASS" : "FAIL"}`);
-    await shot("collision_stop");
+    // The front probe should hold the saddle ~1.3 m+ back, so the basket never enters the obstacle.
+    const stopOk = c.speed < 0.3 && c.z > target.z + 1.1;
+    console.log(`collision head-on: obstacle u=${target.u.toFixed(2)} z=${target.z.toFixed(1)} -> bike z=${c.z.toFixed(1)} (gap ${(c.z - target.z).toFixed(2)}) speed=${c.speed.toFixed(2)} ${stopOk ? "PASS" : "FAIL"}`);
+    await shot("collision_headon");
     // 2) Hold S: walks backward.
     await page.keyboard.down("KeyS");
     await page.waitForTimeout(1500);
@@ -128,6 +132,12 @@ try {
     c = await page.evaluate(() => window.__ride.ctl);
     console.log(`collision glancing: bike z=${c.z.toFixed(1)} (obstacle ${target.z.toFixed(1)}) speed=${c.speed.toFixed(2)} ${c.z < target.z - 1 ? "PASS (slid past)" : "FAIL"}`);
   } else console.log("collision: no in-rail obstacle found");
+
+  // Near canopy: ride under the big berm tree at z=-0.5 and crop the canopy overhead.
+  await page.evaluate(() => window.__ride.place(-0.9, 9, 4.5));
+  await page.waitForTimeout(1600);
+  await shot("canopy_near");
+  await crop("canopy_near", 900, 450, -510, -315);
 
   console.log(`audio: ${await page.evaluate(() => window.__ride.audio)}`);
   const log = await page.evaluate(() => window.__ride.fpsLog);

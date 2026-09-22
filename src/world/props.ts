@@ -324,8 +324,8 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
   const r = mulberry32(seed);
   const out: Geo[] = [];
   const det = lod ? 1 : 2;
-  const leaf = (c: THREE.Vector3, rad: number) => {
-    const g = prep(blob(rad, det, 0.16, seed + c.x * 3 + c.y * 7), LEAF[Math.floor(r() * LEAF.length)], M.foliage, 0);
+  const leaf = (c: THREE.Vector3, rad: number, d = det) => {
+    const g = prep(blob(rad, d, 0.16, seed + c.x * 3 + c.y * 7), LEAF[Math.floor(r() * LEAF.length)], M.foliage, 0);
     g.translate(c.x, c.y, c.z);
     return g;
   };
@@ -341,33 +341,54 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
       out.push(beam(V(top.x * 0.6, h * 0.7, top.z * 0.6), V(Math.cos(a) * cr * 0.6, h + range(r, 0.4, 1.4), Math.sin(a) * cr * 0.6), 0.12, "#5b4331", M.bark, 5, 0.06));
     }
     const blobs: Geo[] = [];
+    const shell: { c: THREE.Vector3; rad: number }[] = [];
+    /** Distance from p to the union of canopy blobs (negative inside). */
+    const surfDist = (p: THREE.Vector3) => {
+      let d = Infinity;
+      for (const s of shell) d = Math.min(d, p.distanceTo(s.c) - s.rad * 0.92);
+      return d;
+    };
     const n = lod ? 7 : 13;
     for (let i = 0; i < n; i++) {
       const a = r() * Math.PI * 2;
       const e = range(r, -0.35, 1.0);
       const d = cr * range(r, 0.45, 0.8);
       const c = V(center.x + Math.cos(a) * d * Math.cos(e), center.y + Math.sin(e) * d * (kind === "tall" ? 1.2 : 0.75), center.z + Math.sin(a) * d * Math.cos(e));
-      blobs.push(leaf(c, cr * range(r, 0.42, 0.62)));
+      const rad = cr * range(r, 0.42, 0.62);
+      // Hero trees get denser main masses: no big flat facets when one hangs over the camera.
+      blobs.push(leaf(c, rad, lod || rad < cr * 0.52 ? det : 3));
+      shell.push({ c, rad });
     }
-    blobs.push(leaf(center, cr * 0.75));
+    blobs.push(leaf(center, cr * 0.75, lod ? det : 3));
+    shell.push({ c: center, rad: cr * 0.75 });
     for (const b of blobs) {
-      spherize(b, center, 0.65, kind === "tall" ? 0.8 : 1.2);
+      spherize(b, center, lod ? 0.65 : 0.72, kind === "tall" ? 0.8 : 1.2);
       out.push(b);
     }
     if (!lod) {
       // Scalloped silhouette: leaf-cluster cards around the canopy shell, plus a few lumps.
       for (let i = 0; i < 16; i++) {
         const dir = randDir(r);
-        const rad = cr * range(r, 0.88, 1.0);
+        let rad = cr * range(r, 0.88, 1.0);
         const c = center.clone().add(V(dir.x * rad, dir.y * rad * sy, dir.z * rad));
+        for (let s = 0; s < 24 && surfDist(c) > 0; s++) {
+          rad *= 0.95;
+          c.copy(center).add(V(dir.x * rad, dir.y * rad * sy, dir.z * rad));
+        }
         const g = leaf(c, cr * range(r, 0.16, 0.24));
         spherize(g, center, 0.7, 1.2);
         out.push(g);
       }
       for (let i = 0; i < 230; i++) {
         const dir = randDir(r);
-        const rad = cr * range(r, 0.98, 1.16);
+        let rad = cr * range(r, 0.98, 1.16);
         const c = center.clone().add(V(dir.x * rad, dir.y * rad * sy, dir.z * rad));
+        // Pull the card in until it sits on the blob shell (never a clump floating in the air).
+        for (let s = 0; s < 24 && surfDist(c) > 0.12; s++) {
+          rad *= 0.95;
+          c.copy(center).add(V(dir.x * rad, dir.y * rad * sy, dir.z * rad));
+        }
+        if (surfDist(c) > 0.3) continue;
         const nrm = dir.clone().normalize();
         const facing = dir.clone().add(V(range(r, -0.5, 0.5), range(r, -0.3, 0.5), range(r, -0.5, 0.5))).normalize();
         out.push(leafCard(c, facing, cr * range(r, 0.18, 0.28), LEAF[Math.floor(r() * LEAF.length)], nrm, r() * 6.28));
@@ -505,12 +526,25 @@ export function fence(len: number, h: number, color: string, seed: number, withV
     out.push(rail);
   }
   if (withVines) {
-    for (let x = 0.3; x < len; x += range(r, 0.6, 2.2)) {
-      if (r() < 0.4) continue;
-      const cnt = Math.floor(range(r, 3, 8));
-      for (let k = 0; k < cnt; k++) {
-        const d = V(range(r, -0.5, 0.5), range(r, -0.3, 0.6), 1).normalize();
-        out.push(leafCard(V(x + range(r, -0.3, 0.3), range(r, 0.1, h + 0.05), 0.1), d, range(r, 0.2, 0.32), r() > 0.5 ? "#1c3b28" : "#24462b", V(0, 0.4, 1).normalize(), r() * 6.28));
+    // Vines hug the timber: climbing up posts from the ground, or trailing along a rail.
+    const rails = [h * 0.45, h * 0.92];
+    const leafAt = (x: number, y: number, s: number) => {
+      const d = V(range(r, -0.35, 0.35), range(r, -0.15, 0.4), 1).normalize();
+      out.push(leafCard(V(x, y, 0.1), d, s, r() > 0.5 ? "#1c3b28" : "#24462b", V(0, 0.4, 1).normalize(), r() * 6.28));
+    };
+    for (let i = 0; i <= n; i++) {
+      if (r() < 0.55) continue;
+      const px = (i / n) * len;
+      const top = range(r, 0.35, 1) * (h + 0.05);
+      for (let y = 0.05; y < top; y += range(r, 0.09, 0.15)) leafAt(px + range(r, -0.07, 0.07), y, range(r, 0.13, 0.2));
+      // A short run out along the upper or lower rail from the post.
+      const ry = rails[r() < 0.5 ? 0 : 1];
+      if (ry > top) continue;
+      const run = range(r, 0.2, 0.9) * (r() < 0.5 ? -1 : 1);
+      for (let k = 0; k < 7; k++) {
+        const x = px + (run * k) / 6;
+        if (x < 0 || x > len) break;
+        leafAt(x, ry + range(r, -0.05, 0.05), range(r, 0.12, 0.19));
       }
     }
   }

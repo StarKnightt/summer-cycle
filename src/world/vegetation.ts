@@ -157,13 +157,20 @@ export function boulder(seed: number): Geo {
   }
   g.computeVertexNormals();
   const col = new Float32Array(p.count * 3);
-  const stone = new THREE.Color("#8d8a90");
-  const moss = new THREE.Color("#6e9a3e");
+  // Weathered dark stone with mottled moss creeping over the top (never a pale grey dome).
+  const stone = new THREE.Color("#5f5b62");
+  const stoneDk = new THREE.Color("#3e3a42");
+  const moss = new THREE.Color("#3f6a30");
+  const mossHi = new THREE.Color("#5a8438");
   const c = new THREE.Color();
   const nr = g.attributes.normal;
   for (let i = 0; i < p.count; i++) {
     const up = nr.getY(i);
-    c.copy(stone).lerp(moss, Math.max(0, Math.min(1, (up - 0.45) * 2.5)));
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const mot = 0.5 + 0.5 * Math.sin(x * 5.3 + seed) * Math.sin(z * 4.7 - seed) * Math.sin(y * 6.1 + 1.3);
+    c.copy(stone).lerp(stoneDk, 0.4 + 0.6 * (1 - mot) * (up < 0 ? 1 : 0.5));
+    const m = Math.max(0, Math.min(1, (up - 0.1 + (mot - 0.5) * 0.7) * 2.2));
+    c.lerp(moss.clone().lerp(mossHi, mot * Math.max(0, up)), m);
     col[i * 3] = c.r;
     col[i * 3 + 1] = c.g;
     col[i * 3 + 2] = c.b;

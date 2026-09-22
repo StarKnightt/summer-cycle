@@ -539,13 +539,13 @@ export function buildChunk(k: number): Chunk {
   // ---- trees
   const trees: Record<string, Inst> = {};
   const farTrees: Record<string, Inst> = {};
-  const addTree = (kind: TreeKind, u: number, z: number, s: number, far = false) => {
+  const addTree = (kind: TreeKind, u: number, z: number, s: number, far = false, rng: Rng = r) => {
     const variants = far ? P.far[kind] : P.trees[kind];
-    const vi = Math.floor(r() * variants.length);
+    const vi = Math.floor(rng() * variants.length);
     const key = `${kind}${vi}`;
     const bucket = far ? farTrees : trees;
     (bucket[key] ??= newInst());
-    pushInst(bucket[key], roadX(z) + u, groundH(u, z) - 0.1, z, r() * 6.28, s, s * range(r, 0.9, 1.1), hsl(col("#ffffff"), r, 0.015, 0.05, 0.05));
+    pushInst(bucket[key], roadX(z) + u, groundH(u, z) - 0.1, z, rng() * 6.28, s, s * range(rng, 0.9, 1.1), hsl(col("#ffffff"), rng, 0.015, 0.05, 0.05));
     if (Math.abs(u) < 14) colliders.push({ x: roadX(z) + u, z, r: 0.5 * s });
   };
   // Village backdrop: a big dark tree mass behind the houses (as in the reference).
@@ -558,7 +558,16 @@ export function buildChunk(k: number): Chunk {
   // Trees on the paddy-side berm: the low sun throws their dappled shadows across the road.
   for (const lz of [-0.5, -26, -118, -170, -262, -330, -445, -520, -600]) {
     if (!inRange(lz)) continue;
-    addTree(lz === -0.5 ? "round" : pick(r, ["round", "tall"] as TreeKind[]), -5.3, lz, range(r, 1.0, 1.25));
+    // (The z=-0.5 tree sits back a little: its canopy no longer roofs the road.)
+    const kind = lz === -0.5 ? "round" : pick(r, ["round", "tall"] as TreeKind[]);
+    const s = range(r, 1.0, 1.25);
+    addTree(kind, lz === -0.5 ? -6.6 : -5.3, lz, lz === -0.5 ? 1.0 : s);
+  }
+  // Two tall berm trees just behind the opening shot (out of frame): their long dappled
+  // shadows stripe the road around the rider in the first seconds.
+  const openR = mulberry32(9001);
+  for (const [lz, s] of [[-43, 1.2], [-48.5, 1.1]]) {
+    if (inRange(lz)) addTree("tall", -5.6, lz, s, false, openR);
   }
   for (let z = z0 - range(r, 2, 10); z > z1; z -= range(r, 9, 22)) {
     // Roadside trees on the right (skip the village lots).
@@ -680,7 +689,8 @@ export function buildChunk(k: number): Chunk {
   for (let i = 0; i < 6; i++) {
     const u = range(r, 6, 30), z = range(r, z1, z0);
     if (inHouse(u, z, 1)) continue;
-    pushInst(rocks[Math.floor(r() * 2)], roadX(z) + u, groundH(u, z) - 0.15, z, r() * 6.28, range(r, 0.5, 1.4));
+    const s = range(r, 0.5, 1.2);
+    pushInst(rocks[Math.floor(r() * 2)], roadX(z) + u, groundH(u, z) - 0.25 * s, z, r() * 6.28, s);
   }
 
   // ---- assemble

@@ -100,6 +100,7 @@ float brush(vec3 wp, vec3 n){
 }
 
 // Toon-thresholded shadow map: 1 = sunlit, 0 = in shadow. Canopy shadows get sun flecks.
+bool gFastShadow = false;
 float shadowVis(vec3 wpos, vec3 N){
   if (uShadowOn < 0.5) return 1.0;
   vec2 rel = abs(wpos.xz - uShadowCenter.xz);
@@ -109,10 +110,18 @@ float shadowVis(vec3 wpos, vec3 N){
   vec4 sc = uShadowMat * vec4(p, 1.0);
   vec3 s = sc.xyz / sc.w;
   if (s.x <= 0.0 || s.x >= 1.0 || s.y <= 0.0 || s.y >= 1.0 || s.z >= 1.0) return 1.0;
-  // 3x3 bilinear PCF from a 4x4 texel footprint: smooth, stair-free edges.
   vec2 tc = s.xy / uShadowTexel - 0.5;
   vec2 f = fract(tc);
   vec2 b0 = (floor(tc) + 0.5) * uShadowTexel;
+  if (gFastShadow) {
+    // Foliage: one bilinear 2x2 tap is plenty under the leaf texture (and far cheaper on canopies).
+    float l00 = step(s.z - 0.0008, texture(uShadowMap, b0).r);
+    float l10 = step(s.z - 0.0008, texture(uShadowMap, b0 + vec2(uShadowTexel.x, 0.0)).r);
+    float l01 = step(s.z - 0.0008, texture(uShadowMap, b0 + vec2(0.0, uShadowTexel.y)).r);
+    float l11 = step(s.z - 0.0008, texture(uShadowMap, b0 + uShadowTexel).r);
+    return mix(mix(mix(l00, l10, f.x), mix(l01, l11, f.x), f.y), 1.0, edge);
+  }
+  // 3x3 bilinear PCF from a 4x4 texel footprint: smooth, stair-free edges.
   float L[16];
   float gap = 0.0, n = 0.0;
   for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) {
@@ -142,6 +151,8 @@ vec3 toonT(vec3 base, vec3 N, vec3 wpos, float jitter, float paint, float rimAmt
   float br = brush(wpos, N);
   float t = dot(N, uSunDir) + (br - 0.5) * 0.32 * paint + jitter;
   float sv = shadowVis(wpos, N);
+  // Skin (the only very soft material): cast shadows from hair/cap fall softly, no hard seams.
+  if (soft > 0.12) sv = mix(sv, 1.0, 0.45);
   float lit = smoothstep(0.02 - soft, 0.06 + soft, t) * sv;
   float mid = smoothstep(-0.5 - soft, -0.44 + soft, t);
   vec3 cLit = base * uSunColor;
@@ -324,12 +335,16 @@ void main(){
     mask = -1.0;
   }
   if (mt == 1) {            // foliage: painted leaf clumps
+    gFastShadow = true;
     vec3 an = abs(N);
-    vec2 p = (an.y > 0.55 ? vWPos.xz : (an.x > an.z ? vWPos.zy : vWPos.xy)) * 1.9;
+    // Close to the camera the leaf cells get smaller and softer so they read as foliage, not facets.
+    float nearK = 1.0 - smoothstep(5.0, 16.0, distance(vWPos, cameraPosition));
+    vec2 p = (an.y > 0.55 ? vWPos.xz : (an.x > an.z ? vWPos.zy : vWPos.xy)) * mix(1.9, 4.2, nearK);
     vec2 c = cellular(p);
-    vec2 c2 = cellular(p * 2.6 + 5.0);
-    jit = (c.y - 0.5) * 0.7 + (c2.y - 0.5) * 0.3 - smoothstep(0.5, 0.95, c.x) * 0.3;
-    leafHi = smoothstep(0.55, 0.95, c2.y) * (1.0 - smoothstep(0.3, 0.8, c2.x));
+    // Second octave from cheap value noise (a second cellular lookup cost ~10% fps under canopies).
+    float n2 = vnoise(p * 2.6 + 5.0);
+    jit = ((c.y - 0.5) * 0.7 + (n2 - 0.5) * 0.3 - smoothstep(0.5, 0.95, c.x) * 0.3) * mix(1.0, 0.6, nearK);
+    leafHi = smoothstep(0.62, 0.9, n2) * (1.0 - smoothstep(0.3, 0.8, c.x));
     // Grey light probe: the canopy palette is applied to the toon light response below.
     base = vec3(0.25);
     paint = 1.3; rim = 0.5;
@@ -369,8 +384,8 @@ void main(){
     base *= 1.0 + smoothstep(0.5, 1.0, wv) * clamp(vObj.y * 1.3 - 0.25, 0.0, 1.0) * 0.28;
     paint = 0.8; rim = 0.7; soft = 0.06;
     mask = -1.0;
-  } else if (mt == 7) {     // skin
-    paint = 0.25; soft = 0.05; rim = 0.8;
+  } else if (mt == 7) {     // skin: broad soft wrap so faces never carry a hard crease
+    paint = 0.15; soft = 0.16; rim = 0.8;
   } else if (mt == 8) {     // cloth
     paint = 0.6; rim = 0.7;
   } else if (mt == 9) {     // bark / weathered wood
@@ -425,8 +440,8 @@ void main(){
   }
 
   // Skin shades warm (peach/rose) instead of the cool environment shadow.
-  vec3 shT = mt == 7 ? vec3(0.78, 0.52, 0.5) : uShadowTint;
-  if (mt == 7) jit += 0.22;
+  vec3 shT = mt == 7 ? vec3(0.84, 0.6, 0.56) : uShadowTint;
+  if (mt == 7) jit += 0.34;
   vec3 col = toonT(base, N, vWPos, jit, paint, rim, soft, shT) + emis;
   if (mt == 1) {
     // Canopy palette over the probe's light response: deep blue-green core (#1b3a2a), near-black

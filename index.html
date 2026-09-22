@@ -14,9 +14,13 @@
         color: rgba(255, 252, 240, 0.78); text-shadow: 0 1px 3px rgba(40, 30, 20, 0.35);
         pointer-events: none; user-select: none;
       }
+      #fade {
+        position: fixed; inset: 0; background: #f6efdc; pointer-events: none; z-index: 5;
+      }
     </style>
   </head>
   <body>
+    <div id="fade"></div>
     <div id="hud"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

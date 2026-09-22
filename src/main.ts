@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { G } from "./render/materials";
 import { Post } from "./render/post";
 import { LAYER_REFLECT, LAYER_SHADOW, PaddyReflection, SunShadow, onLayers } from "./render/lightpasses";
-import { World } from "./world/chunks";
+import { World, type Contact } from "./world/chunks";
 import { Sky } from "./world/sky";
 import { L, roadX, roadYaw } from "./world/road";
 import { Rider } from "./rider/rider";
@@ -36,7 +36,8 @@ scene.add(rider.root);
 const shadow = new SunShadow(2048, 55);
 const reflection = new PaddyReflection(Math.floor(innerWidth * 0.5), Math.floor(innerHeight * 0.5));
 
-const ctl = new Controller(AUTOPLAY);
+const startParam = params.get("start");
+const ctl = new Controller(AUTOPLAY, startParam !== null && Number.isFinite(Number(startParam)) ? Number(startParam) : undefined);
 const chase = new ChaseCam(innerWidth / innerHeight);
 const camParam = params.get("cam");
 if (camParam === "fpp") {
@@ -71,10 +72,34 @@ let last = performance.now();
 let t = 0;
 const shadowCenter = new THREE.Vector3();
 let near = { trees: 0, houses: 0 };
+/** The bike as three circles: body at the saddle, front wheel + basket ahead, rear wheel behind. */
+function bikeContact(x: number, z: number): Contact {
+  const fx = -Math.sin(ctl.yaw), fz = -Math.cos(ctl.yaw);
+  let best = world.contact(x, z, 0.35);
+  for (const [d, r] of [[0.75, 0.28], [-0.45, 0.25]]) {
+    const c = world.contact(x + fx * d, z + fz * d, r);
+    if (c.pen > best.pen) best = c;
+  }
+  return best;
+}
+// Warm-up: render a few frames behind the cream veil with the clock frozen (shader compile,
+// shadow map + paddy reflection filled), then start time and fade the veil out.
+const WARM_FRAMES = 8;
+const FADE = 0.45;
+const fadeEl = document.getElementById("fade")!;
+let warm = 0;
 function frame(now: number) {
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.1) dt = 0.1;
+  if (warm < WARM_FRAMES) {
+    warm++;
+    dt = 0;
+  } else {
+    const k = Math.min(1, t / FADE);
+    fadeEl.style.opacity = String(1 - k * k * (3 - 2 * k));
+    if (k >= 1 && fadeEl.style.display !== "none") fadeEl.style.display = "none";
+  }
   t += dt;
   G.uTime.value = t;
 
@@ -82,7 +107,7 @@ function frame(now: number) {
   const steps = Math.max(1, Math.ceil((Math.abs(ctl.speed) * dt) / 0.15));
   let bumpMax = 0;
   for (let i = 0; i < steps; i++) {
-    ctl.update(dt / steps, input, (x, z) => world.contact(x, z, 0.35));
+    ctl.update(dt / steps, input, bikeContact);
     bumpMax = Math.max(bumpMax, ctl.bumpImpulse);
   }
   ctl.bumpImpulse = bumpMax;
@@ -148,7 +173,9 @@ declare global {
   }
 }
 window.__ride = {
-  ready: true,
+  get ready() {
+    return warm >= WARM_FRAMES;
+  },
   get fps() {
     return fps;
   },
