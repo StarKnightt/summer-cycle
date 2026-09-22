@@ -2,10 +2,12 @@ import { RAIL, roadX, roadYaw } from "../world/road";
 import { BIKE } from "./rider";
 import { clamp, damp } from "../core/rng";
 import type { Input } from "../core/input";
+import type { Contact } from "../world/chunks";
 
 const CRUISE = 6.0;
 const MAX = 10.5;
 const GEAR = 2.3; // wheel revolutions per crank revolution
+const BACK = 0.8; // walking the bike backward, m/s
 /** Opening frame: village + dark tree mass + pole in the right third, paddy mirror on the left. */
 const START_Z = 6;
 
@@ -24,11 +26,15 @@ export class Controller {
   pedaling = 1;
   time = 0;
   braking = false;
+  /** 0..1 smoothed brake pressure (for the audio). */
+  brakePressure = 0;
+  /** 0..1 impulse on the frame she knocks an obstacle. */
+  bumpImpulse = 0;
   private coastT = 0;
 
   constructor(public autoplay: boolean) {}
 
-  update(dt: number, input: Input, blocked: (x: number, z: number) => number): void {
+  update(dt: number, input: Input, blocked: (x: number, z: number) => Contact): void {
     this.time += dt;
     let throttle = 0;
     let brake = 0;
@@ -54,23 +60,28 @@ export class Controller {
       steerIn = (input.left ? 1 : 0) - (input.right ? 1 : 0);
     }
 
-    // Speed: pedal to accelerate, drift back to cruise, brake to stop.
-    const tgt = this.autoplay ? CRUISE : CRUISE;
-    if (brake) this.speed -= 4.2 * dt;
+    // Speed: pedal to accelerate, drift back to cruise, brake to stop; holding S at a standstill
+    // walks the bike backward at ~0.8 m/s.
+    const tgt = CRUISE;
+    if (brake) {
+      if (this.speed > 0.05) this.speed = Math.max(0, this.speed - 4.2 * dt);
+      else this.speed = damp(this.speed, -BACK, 4, dt);
+    } else if (this.speed < 0) this.speed = Math.min(0, this.speed + 3 * dt);
     else if (throttle > 0) this.speed += (this.autoplay ? 1.0 : 1.7) * throttle * dt * (1 - this.speed / (MAX + 1));
     else if (this.autoplay && this.coastT) this.speed -= 0.25 * dt;
     else if (this.speed < tgt) this.speed += 0.9 * dt;
     else this.speed -= 0.35 * dt;
-    this.speed = clamp(this.speed, 0, MAX);
-    this.braking = !!brake;
-    const wantPedal = !brake && (throttle > 0 || (!this.coastT && this.speed <= tgt + 0.05)) ? 1 : 0;
+    this.speed = clamp(this.speed, -BACK, MAX);
+    this.braking = !!brake && this.speed > 0.05;
+    this.brakePressure = damp(this.brakePressure, this.braking ? 1 : 0, 10, dt);
+    const wantPedal = !brake && this.speed >= 0 && (throttle > 0 || (!this.coastT && this.speed <= tgt + 0.05)) ? 1 : 0;
     this.pedaling = damp(this.pedaling, wantPedal, 5, dt);
 
     // Steering → yaw rate via bicycle kinematics; less authority at speed for smoothness.
     const maxSteer = 0.3 / (1 + this.speed * 0.06);
     this.steer = damp(this.steer, steerIn * maxSteer, this.autoplay ? 4 : 6, dt);
     // At a standstill she can still walk the bars round (so a stop at an obstacle isn't a dead end).
-    const turnSpeed = steerIn !== 0 ? Math.max(this.speed, 1.2) : this.speed;
+    const turnSpeed = steerIn !== 0 && Math.abs(this.speed) < 1.2 ? (this.speed < 0 ? -1.2 : 1.2) : this.speed;
     this.yawRate = (turnSpeed * Math.tan(this.steer)) / BIKE.WHEELBASE;
     this.yaw += this.yawRate * dt;
 
@@ -84,17 +95,43 @@ export class Controller {
       const ry = roadYaw(nz);
       this.yaw = damp(this.yaw, ry, 6, dt);
     }
-    // Obstacles: blocked() returns penetration depth (0 = clear). Refuse steps that go deeper;
-    // steps that back out of contact are allowed so she can ride away after turning.
-    const now = blocked(this.x, this.z);
-    const next = blocked(nx, nz);
-    if (next > 0 && next >= now - 1e-4) {
-      this.speed = 0;
-      this.bumped = true;
+    // Obstacles: on contact remove only the motion into the obstacle and keep the tangential
+    // slide; a near head-on hit (heading within ~30° of the surface normal) is a dead stop.
+    this.bumped = false;
+    this.bumpImpulse = 0;
+    const c = blocked(nx, nz);
+    if (c.pen > 0) {
+      let dx = nx - this.x, dz = nz - this.z;
+      const into = dx * c.nx + dz * c.nz;
+      const len = Math.hypot(dx, dz);
+      if (into < 0 && len > 1e-6) {
+        const headOn = -into / len; // cos of angle between travel and -normal
+        if (headOn > Math.cos((30 * Math.PI) / 180)) {
+          if (Math.abs(this.speed) > 0.5) this.bumpImpulse = Math.min(1, Math.abs(this.speed) / 6);
+          this.speed = 0;
+          dx = 0;
+          dz = 0;
+        } else {
+          dx -= c.nx * into;
+          dz -= c.nz * into;
+          this.speed *= 1 - (1 - Math.sqrt(1 - headOn * headOn)) * Math.min(1, dt * 8);
+          if (headOn > 0.2) this.bumpImpulse = Math.min(0.5, headOn * Math.abs(this.speed) / 8);
+        }
+        this.bumped = true;
+      }
+      nx = this.x + dx;
+      let nz2 = this.z + dz;
+      // Push back out to the surface so she never sinks into the object.
+      const c2 = blocked(nx, nz2);
+      if (c2.pen > 0) {
+        nx += c2.nx * c2.pen;
+        nz2 += c2.nz * c2.pen;
+      }
+      this.x = nx;
+      this.z = nz2;
     } else {
       this.x = nx;
       this.z = nz;
-      this.bumped = false;
     }
 
     this.lean = damp(this.lean, clamp(Math.atan((this.speed * this.yawRate) / 9.81) * 1.4, -0.4, 0.4), 5, dt);

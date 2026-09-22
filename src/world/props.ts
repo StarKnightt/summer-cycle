@@ -126,7 +126,7 @@ function acUnit(): Geo[] {
 function pottedPlant(r: number, seed: number): Geo[] {
   const pot = cyl(r * 0.8, r * 0.6, r * 1.2, "#8f5236", M.plain, 10);
   pot.translate(0, r * 0.6, 0);
-  const leaves = prep(blob(r * 1.2, 1, 0.25, seed), "#3f7a34", M.foliage);
+  const leaves = prep(blob(r * 1.2, 1, 0.25, seed), "#22442b", M.foliage);
   spherize(leaves, V(0, 0, 0), 0.6);
   leaves.translate(0, r * 1.9, 0);
   return [pot, leaves];
@@ -152,7 +152,7 @@ function vines(h: number, w: number, seed: number): Geo[] {
     const y = Math.pow(r(), 0.7) * h;
     const x = range(r, -w / 2, w / 2) * (1 - (y / h) * 0.5);
     const d = V(range(r, -0.4, 0.4), range(r, -0.2, 0.5), 1).normalize();
-    out.push(leafCard(V(x, y, 0.04), d, range(r, 0.22, 0.36), r() > 0.5 ? "#2f6a2c" : "#4d8a36", V(0, 0.3, 1).normalize(), r() * 6.28));
+    out.push(leafCard(V(x, y, 0.04), d, range(r, 0.22, 0.36), r() > 0.5 ? "#1c3b28" : "#24462b", V(0, 0.3, 1).normalize(), r() * 6.28));
   }
   return out;
 }
@@ -313,7 +313,8 @@ export function house(o: HouseOpts): Geo {
 
 export type TreeKind = "round" | "tall" | "bush" | "cedar";
 
-const LEAF = ["#2f6a34", "#3a7a3a", "#2a5c30", "#44843a", "#5c9a3a"];
+/** Deep blue-green canopy core; the foliage shader lifts only sunlit upper clusters toward #4f7d3a. */
+const LEAF = ["#1b3a2a", "#1e3f2a", "#183628", "#21422b", "#1c3c2e"];
 
 /**
  * Tree prototype, base at origin. `lod`: 0 = hero (leaf-card scalloped silhouette),
@@ -397,7 +398,7 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
       const t = i / (tiers - 1);
       const y = h * (0.28 + t * 0.72);
       const rad = (1 - t) * 1.9 + 0.5;
-      const g = prep(blob(rad, 1, 0.22, seed + i * 11), i % 2 ? "#1f4a2e" : "#2a5a34", M.foliage);
+      const g = prep(blob(rad, 1, 0.22, seed + i * 11), i % 2 ? "#15322a" : "#1a392b", M.foliage);
       g.scale(1, 0.75, 1);
       g.translate(0, y, 0);
       spherize(g, V(0, y - rad * 0.3, 0), 0.55, 1.4);
@@ -509,7 +510,7 @@ export function fence(len: number, h: number, color: string, seed: number, withV
       const cnt = Math.floor(range(r, 3, 8));
       for (let k = 0; k < cnt; k++) {
         const d = V(range(r, -0.5, 0.5), range(r, -0.3, 0.6), 1).normalize();
-        out.push(leafCard(V(x + range(r, -0.3, 0.3), range(r, 0.1, h + 0.05), 0.1), d, range(r, 0.2, 0.32), r() > 0.5 ? "#2f6a2c" : "#4d8a36", V(0, 0.4, 1).normalize(), r() * 6.28));
+        out.push(leafCard(V(x + range(r, -0.3, 0.3), range(r, 0.1, h + 0.05), 0.1), d, range(r, 0.2, 0.32), r() > 0.5 ? "#1c3b28" : "#24462b", V(0, 0.4, 1).normalize(), r() * 6.28));
       }
     }
   }

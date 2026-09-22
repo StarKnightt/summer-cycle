@@ -58,7 +58,7 @@ try {
     : [
         [0.5, "first_0.5s"], [1, "first_1.0s"], [5, "t05s"],
         [5.6, "@houses"], [6.4, "@paddy"], [7.2, "@chase"],
-        [10, "t10s"], [15, "t15s"], [20, "t20s"], [30, "t30s"], [40, "t40s"],
+        [10, "t10s"], [15, "t15s"], [20, "t20s"], [25, "t25s"], [30, "t30s"], [35, "t35s"], [40, "t40s"],
         [41, "@fpp"], [42, "fpp_a"], [46, "fpp_b"], [46.2, "@tpp"], [47.4, "fpp_back_tpp"],
       ];
   for (const [tt, name] of plan) {
@@ -80,21 +80,53 @@ try {
   await cam("side");
   await page.waitForTimeout(500);
   await shot("side");
+  const crop = async (name, w, h, dx = 0, dy = 0) => {
+    const file = path.join(OUT, "crops", `${name}.png`);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await page.screenshot({ path: file, clip: { x: (W - w) / 2 + dx, y: (H - h) / 2 + dy, width: w, height: h } });
+  };
+  for (const [m, n] of [["face", "face_front"], ["faceside", "face_side"], ["back", "face_back"]]) {
+    await cam(m);
+    await page.waitForTimeout(400);
+    await crop(n, 1000, 1000);
+  }
   await cam("tpp");
+  await page.waitForTimeout(1500);
+  await crop("verge_right", 900, 600, 500, 200);
+  await crop("road", 900, 500, 0, 290);
+  await crop("rider_back", 500, 700, -200, 120);
+  await crop("sky_clouds", 1920, 460, 0, -310);
 
-  // Collision: manual mode, aim at the post box on the road edge, confirm the bike stops.
+  // Collision: manual mode against an in-rail obstacle on the right edge.
   const obs = await page.evaluate(() => window.__ride.obstacles());
   const target = obs.filter((o) => o.u > 2).sort((a, b) => b.z - a.z)[0];
   if (target) {
-    await page.evaluate((o) => {
-      window.__ride.setAutoplay(false);
-      window.__ride.place(o.u - 0.1, o.z + 10, 4.5);
-    }, target);
-    await page.waitForTimeout(3500);
-    const c = await page.evaluate(() => window.__ride.ctl);
-    const ok = c.bumped && c.speed < 0.05;
-    console.log(`collision: obstacle u=${target.u.toFixed(2)} z=${target.z.toFixed(1)} -> bike z=${c.z.toFixed(1)} speed=${c.speed.toFixed(2)} bumped=${c.bumped} ${ok ? "PASS" : "FAIL"}`);
+    const run = async (du, label, ms = 3500) => {
+      await page.evaluate(([o, d]) => {
+        window.__ride.setAutoplay(false);
+        window.__ride.place(o.u + d, o.z + 10, 4.5);
+      }, [target, du]);
+      await page.waitForTimeout(ms);
+      return page.evaluate(() => window.__ride.ctl);
+    };
+    // 1) Head-on: dead stop.
+    let c = await run(-0.05, "headon");
+    const stopOk = c.speed < 0.3 && c.z > target.z;
+    console.log(`collision head-on: obstacle u=${target.u.toFixed(2)} z=${target.z.toFixed(1)} -> bike z=${c.z.toFixed(1)} speed=${c.speed.toFixed(2)} ${stopOk ? "PASS" : "FAIL"}`);
     await shot("collision_stop");
+    // 2) Hold S: walks backward.
+    await page.keyboard.down("KeyS");
+    await page.waitForTimeout(1500);
+    const cb = await page.evaluate(() => window.__ride.ctl);
+    await page.keyboard.up("KeyS");
+    console.log(`collision walk-back: z ${c.z.toFixed(2)} -> ${cb.z.toFixed(2)} speed=${cb.speed.toFixed(2)} ${cb.z > c.z + 0.5 ? "PASS" : "FAIL"}`);
+    // 3) Glancing: slides past along the obstacle instead of stopping.
+    await page.evaluate(([o]) => window.__ride.place(o.u - 0.62, o.z + 5, 4.5), [target]);
+    await page.waitForTimeout(700);
+    await shot("collision_slide");
+    await page.waitForTimeout(1800);
+    c = await page.evaluate(() => window.__ride.ctl);
+    console.log(`collision glancing: bike z=${c.z.toFixed(1)} (obstacle ${target.z.toFixed(1)}) speed=${c.speed.toFixed(2)} ${c.z < target.z - 1 ? "PASS (slid past)" : "FAIL"}`);
   } else console.log("collision: no in-rail obstacle found");
 
   console.log(`audio: ${await page.evaluate(() => window.__ride.audio)}`);

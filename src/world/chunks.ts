@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { CHUNK, L, NCHUNK, RIBBON_HALF, faceRoadFromRight, groundH, pnoise, roadX, roadYaw, smooth } from "./road";
 import { ID, M, box, merge, prep, shear, wire, xf } from "./geo";
 import { fence, house, pole, postBox, stoneMarker, tree, warningSign, type TreeKind } from "./props";
-import { boulder, butterfly, flower, flowerSpike, grassClump, riceTuft, shortGrass } from "./vegetation";
+import { boulder, butterfly, flower, flowerSpike, fringeGrass, grassClump, riceTuft, shortGrass, vergeClump } from "./vegetation";
 import { roadMaterial, uber, waterMaterial } from "../render/materials";
 import { LAYER_REFLECT, LAYER_SHADOW, onLayers } from "../render/lightpasses";
 import { mulberry32, pick, range, type Rng } from "../core/rng";
@@ -13,6 +13,12 @@ export interface Collider {
   x: number;
   z: number;
   r: number;
+}
+
+export interface Contact {
+  pen: number;
+  nx: number;
+  nz: number;
 }
 
 export interface Chunk {
@@ -102,7 +108,9 @@ let protos: {
   trees: Record<TreeKind, Geo[]>;
   far: Record<TreeKind, Geo[]>;
   grass: Geo[];
+  verge: Geo[];
   short: Geo;
+  fringe: Geo;
   rice: Geo;
   flower: Geo;
   fly: Geo;
@@ -126,7 +134,9 @@ function getProtos() {
         cedar: [tree("cedar", 18, 1), tree("cedar", 19, 1)],
       },
       grass: [grassClump(1), grassClump(2), grassClump(3)],
+      verge: [vergeClump(21), vergeClump(22), vergeClump(23)],
       short: shortGrass(4),
+      fringe: fringeGrass(6),
       rice: riceTuft(5),
       flower: flower(),
       fly: butterfly(),
@@ -198,13 +208,42 @@ const hsl = (base: THREE.Color, r: Rng, dh: number, ds: number, dl: number) => {
 
 const U_SAMPLES = [-5.4, -4.6, -4.0, -3.4, -2.6, 0, 2.6, 3.4, 4.2, 5.2, 6.4, 8, 10, 12.5, 15.5, 19, 23, 28, 34, 41, 49, 58, 68, 80, 94, 110, 130, 155, 185, 220, 260];
 
+/** Value noise periodic in z (period L, so recycled chunks stay seamless), cells of `cell` metres. */
+function pvnoise(u: number, z: number, cell: number, seed: number): number {
+  const n = Math.round(L / cell);
+  const x = u / cell, y = (-z / L) * n;
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = x - ix, fy = y - iy;
+  const h = (a: number, b: number) => {
+    const s = Math.sin(a * 127.1 + (((b % n) + n) % n) * 311.7 + seed * 74.7) * 43758.5453;
+    return s - Math.floor(s);
+  };
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const a = h(ix, iy), b = h(ix + 1, iy), c = h(ix, iy + 1), d = h(ix + 1, iy + 1);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}
+
+/** Right-verge grass bed density: 0 = bare dirt / leaf-litter gap, 1 = dense clump bed. */
+const vergeDensity = (u: number, z: number) => smooth(0.25, 0.5, pvnoise(u, z, 3.2, 1) * 0.72 + pvnoise(u, z, 1.1, 2) * 0.28);
+
+const LITTER = col("#3b3826");
+const LITTER_DRY = col("#524630");
+const BED = col("#2a4524");
+
 function groundColor(u: number, z: number, out: THREE.Color): THREE.Color {
   const n = pnoise(u, z, 3);
-  if (u < -3.2) return out.set("#5f9a3a").offsetHSL(0, 0, (n - 0.5) * 0.06);
-  if (u < 3.3) return out.set("#6a9e3c");
-  out.set("#6fa843");
+  if (u < -3.2) return out.set("#4a7c34").offsetHSL(0, 0, (n - 0.5) * 0.06);
+  if (u < 3.3) return out.set("#4b7c35");
+  if (u < 7.5) {
+    // Verge floor: dark soil + leaf litter in the gaps between grass beds.
+    out.copy(LITTER).lerp(LITTER_DRY, pvnoise(u, z, 1.7, 5) * 0.7).lerp(BED, smooth(0.15, 0.7, vergeDensity(u, z)));
+    const meadow = col("#5b8f3a").lerp(col("#3f7232"), 0.3);
+    if (villageLot(u, z)) return out.lerp(col("#a88f62"), 0.85);
+    return out.lerp(meadow, smooth(5.8, 7.5, u));
+  }
+  out.set("#5b8f3a");
   const warm = pnoise(u * 0.5, z, 7);
-  out.lerp(col("#9fb54e"), smooth(0.62, 0.85, warm) * 0.55);
+  out.lerp(col("#86a04a"), smooth(0.62, 0.85, warm) * 0.5);
   out.lerp(col("#4f8a38"), smooth(40, 90, u));
   out.lerp(col("#3b7236"), smooth(110, 200, u) * 0.8);
   if (villageLot(u, z)) out.lerp(col("#a88f62"), 0.85);
@@ -287,15 +326,29 @@ function waterPlane(u0: number, u1: number, za: number, zb: number, y: number, g
   return g;
 }
 
+const BANK_FACE = col("#66763a");
+const BANK_TOP = col("#4a7431");
+
+/** Bank faces olive earth, bank tops grassy. */
+function bankColors(g: Geo): Geo {
+  const n = g.attributes.normal;
+  const c = g.attributes.color as THREE.BufferAttribute;
+  for (let i = 0; i < n.count; i++) {
+    const k = n.getY(i) > 0.5 ? BANK_TOP : BANK_FACE;
+    c.setXYZ(i, k.r, k.g, k.b);
+  }
+  return g;
+}
+
 function bermAlongZ(u: number, za: number, zb: number, top: number, w = 0.75): Geo {
   const len = Math.abs(za - zb);
-  const g = prep(new THREE.BoxGeometry(w, top + 0.9, len, 1, 1, Math.max(1, Math.round(len / 2.5))), "#7d9448", M.ground);
+  const g = bankColors(prep(new THREE.BoxGeometry(w, top + 0.9, len, 1, 1, Math.max(1, Math.round(len / 2.5))), "#ffffff", M.ground));
   g.translate(u, (top - 0.9) / 2, (za + zb) / 2);
   return shear(g);
 }
 
 function bermAlongU(z: number, ua: number, ub: number, top: number): Geo {
-  const g = prep(new THREE.BoxGeometry(Math.abs(ua - ub), top + 0.9, 0.6, 3, 1, 1), "#7a9146", M.ground);
+  const g = bankColors(prep(new THREE.BoxGeometry(Math.abs(ua - ub), top + 0.9, 0.6, 3, 1, 1), "#ffffff", M.ground));
   g.translate((ua + ub) / 2, (top - 0.9) / 2, z);
   return shear(g);
 }
@@ -341,19 +394,31 @@ export function buildChunk(k: number): Chunk {
       // Cross berm at the start of this column.
       const ctop = Math.max(paddyLevel(rr, c - 1), lvl) + 0.2;
       bermG.push(bermAlongU(za, uIn - 0.3, uOut + 0.3, ctop));
-      // 3D rice in the nearest row.
+      // 3D rice (V tufts) on the 0.6 m grid rows nearest the road (u > -10.8); every row beyond
+      // is drawn by the water shader on the same grid.
       if (rr === 0) {
-        for (let u = uIn - 0.65; u > uOut + 0.5; u -= 0.6) {
-          for (let z = za - 0.55; z > zb + 0.5; z -= 0.5) {
-            if (r() < 0.3) continue;
+        for (let u = -5.7; u > -10.8; u -= 0.6) {
+          for (let z = za - 0.55; z > zb + 0.5; z -= 0.45) {
+            if (r() < 0.12) continue;
             const s = (0.55 + growth * 0.4) * range(r, 0.85, 1.15);
-            pushInst(rice, roadX(z) + u + range(r, -0.05, 0.05), lvl - 0.02, z + range(r, -0.05, 0.05), r() * 6.28, s, s * range(r, 0.9, 1.2), hsl(col("#ffffff"), r, 0.02, 0.0, 0.06));
+            pushInst(rice, roadX(z) + u + range(r, -0.04, 0.04), lvl - 0.02, z + range(r, -0.04, 0.04), range(r, -0.5, 0.5) + (r() > 0.5 ? 0 : Math.PI / 2), s, s * range(r, 0.9, 1.2), hsl(col("#ffffff"), r, 0.02, 0.0, 0.06));
           }
         }
       }
+      // Grass fringe along both top edges of the nearer banks.
       if (rr <= 1) {
-        for (let z = za; z > zb; z -= 0.7) {
-          if (r() < 0.55) pushInst(bermGrass, roadX(z) + uIn + range(r, -0.3, 0.3), top, z, r() * 6.28, range(r, 0.6, 1.2));
+        const hw = (rr === 0 ? 0.8 : 0.7) / 2 - 0.08;
+        for (let z = za; z > zb; z -= 0.45) {
+          for (const e of [-hw, hw]) if (r() < 0.7) pushInst(bermGrass, roadX(z) + uIn + e + range(r, -0.06, 0.06), top, z, r() * 6.28, range(r, 0.7, 1.25), undefined, hsl(col("#ffffff"), r, 0.02, 0.05, 0.08));
+        }
+      }
+      if (rr <= 1) {
+        for (let u = uIn - 0.4; u > uOut + 0.4; u -= 0.5) {
+          for (const e of [-0.22, 0.22]) {
+            if (r() > 0.6) continue;
+            const zz = za + e;
+            pushInst(bermGrass, roadX(zz) + u, ctop, zz, r() * 6.28, range(r, 0.7, 1.2), undefined, hsl(col("#ffffff"), r, 0.02, 0.05, 0.08));
+          }
         }
       }
       // Bamboo fence on some inner berms.
@@ -388,16 +453,17 @@ export function buildChunk(k: number): Chunk {
     infraG.push(placeAt(g, u, z, ry));
     colliders.push({ x: roadX(z) + u, z, r: rad });
   };
-  obstacle(postBox(), 2.55, SHOP_Z + 5.5, faceRoadFromRight(SHOP_Z + 5.5), 0.3);
-  obstacle(stoneMarker(), 2.5, -140, faceRoadFromRight(-140), 0.22);
-  obstacle(stoneMarker(), -4.05, -205, faceRoadFromRight(-205) + Math.PI, 0.22);
+  // Collider radius = visual half-size + ~0.1 m so nothing ever overlaps the rider.
+  obstacle(postBox(), 2.55, SHOP_Z + 5.5, faceRoadFromRight(SHOP_Z + 5.5), 0.45);
+  obstacle(stoneMarker(), 2.5, -140, faceRoadFromRight(-140), 0.3);
+  obstacle(stoneMarker(), -4.05, -205, faceRoadFromRight(-205) + Math.PI, 0.3);
   if (inRange(-300)) {
     const ep = pole(8.2, false);
-    obstacle(ep.geo, 2.6, -300, roadYaw(-300), 0.22);
+    obstacle(ep.geo, 2.6, -300, roadYaw(-300), 0.26);
   }
   if (inRange(-380)) {
     const ep = pole(8.2, true);
-    obstacle(ep.geo, -2.65, -380, roadYaw(-380), 0.22);
+    obstacle(ep.geo, -2.65, -380, roadYaw(-380), 0.26);
   }
 
   // ---- poles + wires
@@ -535,12 +601,20 @@ export function buildChunk(k: number): Chunk {
     pushInst(grass[Math.floor(r() * 3)], roadX(z) + u, groundH(u, z) - 0.03, z, r() * 6.28, s, s * range(r, 0.8, 1.25), hsl(gBase, r, 0.02, 0.08, 0.07));
   };
   const area = CHUNK;
-  // Right verge: tall and dense. Left verge: between road and paddy berm.
-  for (let i = 0; i < area * 2.6 * 7; i++) {
+  // Right verge: beds of tall clumps (0.4-1.3 m, per clump) with bare litter gaps between beds,
+  // thinned and shortened over the first half metre from the road edge.
+  const verge = [newInst(), newInst(), newInst()];
+  for (let i = 0; i < area * 3.45 * 5.0; i++) {
     const z = range(r, z1, z0);
-    const u = 2.8 + Math.pow(r(), 0.8) * 2.8;
+    const u = range(r, 2.75, 6.2);
     if (inVillage(z) && (u > 4.2 || nearShopFront(z))) continue;
-    addGrass(u, z, range(r, 0.5, 1.05) * smooth(2.7, 3.6, u) + 0.22);
+    if (inHouse(u, z, 0.3)) continue;
+    const d = vergeDensity(u, z);
+    const edge = smooth(2.75, 3.25, u);
+    if (r() > d * (0.2 + 0.8 * edge)) continue;
+    const h = (0.4 + 0.9 * Math.min(1, Math.pow(r(), 0.85) * (0.5 + 0.65 * d))) * (0.55 + 0.45 * edge);
+    const s = range(r, 0.8, 1.2);
+    pushInst(verge[Math.floor(r() * 3)], roadX(z) + u, groundH(u, z) - 0.03, z, r() * 6.28, s, h, hsl(gBase, r, 0.015, 0.06, 0.06));
   }
   // Left verge kept low so the mirror paddies read from the chase camera.
   for (let i = 0; i < area * 1.7 * 6; i++) {
@@ -548,9 +622,9 @@ export function buildChunk(k: number): Chunk {
     const u = -2.8 - r() * 1.75;
     addGrass(u, z, range(r, 0.3, 0.5) * smooth(-2.7, -3.4, u) + 0.12);
   }
-  for (let i = 0; i < area * 24 * 0.5; i++) {
+  for (let i = 0; i < area * 24 * 0.42; i++) {
     const z = range(r, z1, z0);
-    const u = range(r, 5.6, 30);
+    const u = range(r, 5.8, 30);
     if (inVillage(z) && u < 20) continue;
     addGrass(u, z, range(r, 0.7, 1.3));
   }
@@ -624,9 +698,10 @@ export function buildChunk(k: number): Chunk {
   if (waterG.length) add(mesh(merge(waterG), waterMaterial()));
   const dbl = THREE.DoubleSide;
   add(instMesh(P.rice, uber(ID.rice, -1, dbl), rice));
-  add(instMesh(P.short, uber(ID.grass, -1, dbl), bermGrass), R);
+  add(instMesh(P.fringe, uber(ID.grass, -1, dbl), bermGrass));
   add(instMesh(P.short, uber(ID.grass, -1, dbl), weeds));
   for (let i = 0; i < 3; i++) add(instMesh(P.grass[i], uber(ID.grass, -1, dbl), grass[i]));
+  for (let i = 0; i < 3; i++) add(instMesh(P.verge[i], uber(ID.grass, -1, dbl), verge[i]));
   add(instMesh(P.flower, uber(ID.flower, -1, dbl), flowers));
   add(instMesh(P.fly, uber(ID.butterfly, -1, dbl), flies));
   add(instMesh(P.spike, uber(ID.flower, -1), spikes));
@@ -670,17 +745,47 @@ export class World {
 
   /** Deepest circle-collider penetration at (x, z) in world space (0 = clear). */
   hit(x: number, z: number, r: number): number {
-    let pen = 0;
+    return this.contact(x, z, r).pen;
+  }
+
+  /** Deepest penetration plus the push-out normal (from the obstacle toward the point). */
+  contact(x: number, z: number, r: number): Contact {
+    const out: Contact = { pen: 0, nx: 0, nz: 0 };
     for (const c of this.chunks) {
       const oz = c.group.position.z;
       for (const k of c.colliders) {
         const dx = x - k.x, dz = z - (k.z + oz);
         const rr = r + k.r;
         const d2 = dx * dx + dz * dz;
-        if (d2 < rr * rr) pen = Math.max(pen, rr - Math.sqrt(d2));
+        if (d2 < rr * rr) {
+          const d = Math.sqrt(d2);
+          if (rr - d > out.pen) {
+            out.pen = rr - d;
+            out.nx = d > 1e-5 ? dx / d : 1;
+            out.nz = d > 1e-5 ? dz / d : 0;
+          }
+        }
       }
     }
-    return pen;
+    return out;
+  }
+
+  /** 0..1 closeness to trees / houses / paddy water around (x, z), for the soundscape. */
+  closeness(x: number, z: number): { trees: number; houses: number } {
+    let tree = Infinity, house = Infinity;
+    for (const c of this.chunks) {
+      const oz = c.group.position.z;
+      for (const k of c.colliders) {
+        const dx = x - k.x, dz = z - (k.z + oz);
+        const d = Math.sqrt(dx * dx + dz * dz) - k.r;
+        if (k.r > 1.2) house = Math.min(house, d);
+        else if (k.r >= 0.35) tree = Math.min(tree, d);
+      }
+    }
+    return {
+      trees: Math.max(0, Math.min(1, 1 - (tree - 2) / 16)),
+      houses: Math.max(0, Math.min(1, 1 - (house - 3) / 30)),
+    };
   }
 
   /** Nearest obstacle inside the guide rails (for the collision test hook). */

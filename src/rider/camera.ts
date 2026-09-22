@@ -4,7 +4,7 @@ import type { Rider } from "./rider";
 import { damp } from "../core/rng";
 import { roadX } from "../world/road";
 
-export type CamMode = "chase" | "closeup" | "side" | "paddy" | "houses";
+export type CamMode = "chase" | "closeup" | "side" | "paddy" | "houses" | "face" | "faceside" | "back";
 
 const TPP_FOV = 45;
 const FPP_FOV = 70;
@@ -59,7 +59,20 @@ export class ChaseCam {
     let tp: THREE.Vector3;
     let tl: THREE.Vector3;
     let hard = this.mode !== "chase";
+    const head = rider.eyeWorld(new THREE.Vector3());
     switch (this.mode) {
+      case "face": // 3/4 front, close on the head
+        tp = new THREE.Vector3(head.x + fx * 0.85 + rx * 0.45, head.y + 0.02, head.z + fz * 0.85 + rz * 0.45);
+        tl = head.clone().setY(head.y - 0.06);
+        break;
+      case "faceside":
+        tp = new THREE.Vector3(head.x + rx * 0.95 + fx * 0.05, head.y + 0.0, head.z + rz * 0.95 + fz * 0.05);
+        tl = head.clone().setY(head.y - 0.06);
+        break;
+      case "back":
+        tp = new THREE.Vector3(head.x - fx * 1.3 + rx * 0.2, head.y + 0.1, head.z - fz * 1.3 + rz * 0.2);
+        tl = head.clone().setY(head.y - 0.25);
+        break;
       case "closeup":
         tp = new THREE.Vector3(c.x + rx * 2.1 + fx * 1.5, 1.2, c.z + rz * 2.1 + fz * 1.5);
         tl = new THREE.Vector3(c.x + fx * 0.05, 0.95, c.z + fz * 0.05);
@@ -114,7 +127,11 @@ export class ChaseCam {
     rider.eyeWorld(this.eye);
     this.eye.x -= fx * 0.34;
     this.eye.z -= fz * 0.34;
-    this.eye.y = 1.52 + Math.sin(c.crank * 2) * 0.012 * c.pedaling;
+    // ±2 cm bob on each downstroke, and a small side-to-side weight shift per crank revolution.
+    this.eye.y = 1.52 + Math.sin(c.crank * 2) * 0.02 * c.pedaling;
+    const shift = Math.sin(c.crank) * 0.012 * c.pedaling;
+    this.eye.x += fz * shift;
+    this.eye.z -= fx * shift;
     const fl = new THREE.Vector3(this.eye.x + fx * 10, this.eye.y - 3.4, this.eye.z + fz * 10);
     this.m4.lookAt(this.eye, fl, new THREE.Vector3(0, 1, 0));
     this.qF.setFromRotationMatrix(this.m4);

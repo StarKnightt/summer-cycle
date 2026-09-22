@@ -10,9 +10,8 @@ const _c1 = new THREE.Color();
 /** Clump of curved tapered blades with a dark-root → bright-tip gradient. Base at y=0, height ~1. */
 const _cm = new THREE.Color();
 
-function blades(n: number, h: number, w: number, lean: number, root: string, tip: string, seed: number, spread: number, mid?: string): Geo {
+function blades(n: number, h: number, w: number, lean: number, root: string, tip: string, seed: number, spread: number, mid?: string, seg = 3): Geo {
   const r = mulberry32(seed);
-  const seg = 3;
   const pos: number[] = [];
   const col: number[] = [];
   const idx: number[] = [];
@@ -58,9 +57,56 @@ function blades(n: number, h: number, w: number, lean: number, root: string, tip
   return g;
 }
 
-export const grassClump = (seed: number) => blades(9, 0.85, 0.045, 0.12, "#2f5e2a", "#9cd060", seed, 0.14, "#4f8a38");
-export const riceTuft = (seed: number) => blades(6, 0.42, 0.024, 0.22, "#2f6a24", "#a8d85a", seed, 0.03, "#4f8a30");
-export const shortGrass = (seed: number) => blades(6, 0.4, 0.04, 0.2, "#2f5e2a", "#8cc454", seed, 0.1, "#4a8236");
+export const grassClump = (seed: number) => blades(9, 0.85, 0.045, 0.12, "#1f3d22", "#6f9a3e", seed, 0.14, "#33602c", 2);
+/** Tall right-verge clump, height 1 (instances scale it to 0.4-1.3 m): a dense outward fan. */
+export const vergeClump = (seed: number) => blades(12, 1.0, 0.048, 0.17, "#1f3d22", "#6f9a3e", seed, 0.18, "#30592a", 2);
+export const shortGrass = (seed: number) => blades(6, 0.4, 0.04, 0.2, "#22412a", "#6f9a3e", seed, 0.1, "#386530");
+/** Low grass fringe along the paddy bank tops. */
+export const fringeGrass = (seed: number) => blades(5, 0.32, 0.036, 0.3, "#2a4a24", "#7a9c44", seed, 0.1, "#436a2e", 2);
+
+/** Young rice: V-shaped three-blade tuft (upright centre, two out-leaning sides), lighter tips. */
+export function riceTuft(seed: number): Geo {
+  const r = mulberry32(seed);
+  const seg = 3;
+  const pos: number[] = [];
+  const col: number[] = [];
+  const idx: number[] = [];
+  const cRoot = new THREE.Color("#2c4d20");
+  const cBody = new THREE.Color("#3f6b2a");
+  const cTip = new THREE.Color("#8fb05a");
+  const c = new THREE.Color();
+  for (let b = 0; b < 3; b++) {
+    const side = b - 1;
+    const bh = 0.42 * (side === 0 ? range(r, 0.95, 1.05) : range(r, 0.72, 0.88));
+    const tilt = side * range(r, 0.34, 0.5) + range(r, -0.06, 0.06);
+    // Blade axis in the V plane (x-y); width direction twisted 45° off that plane so it never goes edge-on.
+    const wx = Math.cos(tilt) * 0.7, wz = 0.7;
+    const bw = range(r, 0.022, 0.03);
+    const start = pos.length / 3;
+    for (let i = 0; i <= seg; i++) {
+      const t = i / seg;
+      const y = bh * t * (1 - Math.abs(tilt) * 0.25 * t);
+      const off = Math.sin(tilt) * bh * t * (0.55 + 0.45 * t);
+      const hw = bw * (1 - t * 0.9) * 0.5;
+      pos.push(off - wx * hw, y, -wz * hw, off + wx * hw, y, wz * hw);
+      if (t < 0.45) c.copy(cRoot).lerp(cBody, t / 0.45);
+      else c.copy(cBody).lerp(cTip, Math.pow((t - 0.45) / 0.55, 1.3));
+      col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+    }
+    for (let i = 0; i < seg; i++) {
+      const k = start + i * 2;
+      idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  prep(g, null, M.grass);
+  windByHeight(g, 0, 0.42, 0.6, 1.6);
+  return g;
+}
 
 /** Wildflower head: small star of petals on a thin stem. */
 /** Wildflower: alpha-cut five-petal card facing up/out on a thin stem (instance origin = bloom). */

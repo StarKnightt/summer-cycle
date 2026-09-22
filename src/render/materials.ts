@@ -15,9 +15,10 @@ export const G = {
   uTime: { value: 0 },
   // Low golden sun from behind-left of the rider (~25° elevation): long shadows rake forward-right.
   uSunDir: { value: new THREE.Vector3(-0.55, 0.42, 0.72).normalize() },
-  uSunColor: { value: lin("#ffe0ad") },
-  uShadowTint: { value: lin("#7f8fc4") },
-  uSkyZenith: { value: lin("#127f9e") },
+  // Near-white sun so whites stay white; the golden warmth comes from ambient, rim and grade.
+  uSunColor: { value: lin("#fff1dc") },
+  uShadowTint: { value: lin("#8a90b0") },
+  uSkyZenith: { value: lin("#0f6f7d") },
   uSkyMid: { value: lin("#2fa3c0") },
   uSkyHorizon: { value: lin("#bfe3e6") },
   uFogColor: { value: lin("#c6ddd8") },
@@ -144,11 +145,18 @@ vec3 toonT(vec3 base, vec3 N, vec3 wpos, float jitter, float paint, float rimAmt
   float lit = smoothstep(0.02 - soft, 0.06 + soft, t) * sv;
   float mid = smoothstep(-0.5 - soft, -0.44 + soft, t);
   vec3 cLit = base * uSunColor;
-  vec3 cSh = base * shTint;
+  // High-albedo surfaces (blouse, plaster, socks) shade to a light, less saturated blue-grey so
+  // they read as white-in-shade, never as holes or sky.
+  float al = dot(base, vec3(0.2126, 0.7152, 0.0722));
+  float chroma = max(base.r, max(base.g, base.b)) - min(base.r, min(base.g, base.b));
+  float whiteK = smoothstep(0.35, 0.75, al) * (1.0 - smoothstep(0.12, 0.3, chroma));
+  vec3 cSh = base * mix(shTint, vec3(0.37, 0.4, 0.52), whiteK);
   vec3 cDk = cSh * vec3(0.7, 0.72, 0.84);
   vec3 col = mix(cDk, cSh, max(mid, 1.0 - sv));
   col = mix(col, cLit, lit);
   col += base * uSkyMid * 0.1 * (N.y * 0.5 + 0.5);
+  // Warm bounce light from the sunlit ground (the golden-hour warmth, without yellowing whites).
+  col += base * vec3(0.07, 0.045, 0.02) * (0.5 - N.y * 0.5) * (1.0 - lit);
   vec3 V = normalize(cameraPosition - wpos);
   float fr = 1.0 - max(dot(N, V), 0.0);
   float rim = smoothstep(0.58, 0.72, fr) * rimAmt;
@@ -250,7 +258,7 @@ void main(){
     rel.y = mod(rel.y + 1.0, 7.0) - 1.0;
     vec3 c = cameraPosition + rel + vec3(0.0, 0.2, 0.0);
     // Camera-facing billboard; motes closer than ~5 m collapse (never big blobs on the lens).
-    float near = smoothstep(4.0, 8.0, length(rel));
+    float near = smoothstep(4.0, 8.0, length(rel)) * (0.55 + 0.9 * hash12(ipos.xz * 7.1));
     vec3 right = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
     vec3 up = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
     wp = vec4(c + (right * position.x + up * position.y) * near, 1.0);
@@ -321,9 +329,10 @@ void main(){
     vec2 c = cellular(p);
     vec2 c2 = cellular(p * 2.6 + 5.0);
     jit = (c.y - 0.5) * 0.7 + (c2.y - 0.5) * 0.3 - smoothstep(0.5, 0.95, c.x) * 0.3;
-    base *= 0.8 + c.y * 0.34;
     leafHi = smoothstep(0.55, 0.95, c2.y) * (1.0 - smoothstep(0.3, 0.8, c2.x));
-    paint = 1.3; rim = 1.1;
+    // Grey light probe: the canopy palette is applied to the toon light response below.
+    base = vec3(0.25);
+    paint = 1.3; rim = 0.5;
   } else if (mt == 2) {     // dark stained vertical wall boards
     vec2 tg = normalize(vec2(-N.z, N.x) + 1e-4);
     float s = dot(vWPos.xz, tg);
@@ -353,7 +362,12 @@ void main(){
     paint = 0.2; rim = 0.0;
   } else if (mt == 6) {     // grass blades: soft up-facing normals, no ink
     N = normalize(mix(N, vec3(0.0, 1.0, 0.0), 0.7));
-    paint = 0.8; rim = 0.9; soft = 0.06;
+    // Cool dense grass: offset the warm sun so lit tips land near the authored #6f9a3e.
+    base *= vec3(1.0, 1.22, 1.75);
+    // Wind-sway bands: tips brighten where the travelling gust wave (same as windOffset) leans them.
+    float wv = sin(dot(vWPos.xz, uWindDir) * 0.22 - uTime * 2.1) * 0.5 + 0.5;
+    base *= 1.0 + smoothstep(0.5, 1.0, wv) * clamp(vObj.y * 1.3 - 0.25, 0.0, 1.0) * 0.28;
+    paint = 0.8; rim = 0.7; soft = 0.06;
     mask = -1.0;
   } else if (mt == 7) {     // skin
     paint = 0.25; soft = 0.05; rim = 0.8;
@@ -392,7 +406,12 @@ void main(){
     vec2 d = vUv - 0.5;
     float a = 1.0 - smoothstep(0.2, 0.5, length(d));
     if (a < 0.5) discard;
-    gColor = vec4(vec3(1.08, 1.02, 0.84), 1.0);
+    // Only float in the shade under canopies and eaves, low down: sunbeam dust, never sky specks.
+    float shade = 1.0 - shadowVis(vec3(vWPos.x, 0.0, vWPos.z), vec3(0.0, 1.0, 0.0));
+    if (shade < 0.5 || vWPos.y > 5.0) discard;
+    // ~60% coverage (the Kuwahara pass melts the dither into a soft glow).
+    if (hash12(floor(gl_FragCoord.xy)) > 0.6) discard;
+    gColor = vec4(vec3(1.0, 0.9, 0.62) * 1.02, 1.0);
     gNormal = vec4(0.5, 0.5, uId / 32.0, -1.0);
     return;
   } else if (mt == 19) {    // painted distant mountains: authored colour, soft top-lit gradient
@@ -410,10 +429,30 @@ void main(){
   if (mt == 7) jit += 0.22;
   vec3 col = toonT(base, N, vWPos, jit, paint, rim, soft, shT) + emis;
   if (mt == 1) {
-    // Deep teal-green interiors, sunlit yellow-green leaf flecks on the lit side.
-    float litSide = smoothstep(-0.05, 0.25, dot(N, uSunDir) + jit * 0.5);
-    col = mix(col * vec3(0.66, 0.8, 0.88), col, litSide);
-    col = mix(col, base * vec3(1.45, 1.5, 0.75) * uSunColor, leafHi * litSide * 0.5);
+    // Canopy palette over the probe's light response: deep blue-green core (#1b3a2a), near-black
+    // band on the far side (#10211d), sunlit clusters (#4f7d3a) only on the sun-facing upper shell.
+    vec3 Lr = col * 4.0;
+    float sunLit = smoothstep(0.35, 0.8, (Lr.r - uShadowTint.r) / max(uSunColor.r - uShadowTint.r, 0.05));
+    float ndl = dot(N, uSunDir);
+    vec3 cCore = vec3(0.0103, 0.0423, 0.0232);
+    vec3 tintK = mix(vec3(1.0), clamp(vCol / cCore, 0.5, 1.8), 0.6);
+    float v = 0.86 + jit * 0.3;
+    vec3 core = cCore * tintK * v;
+    vec3 band = vec3(0.0056, 0.0152, 0.0122) * tintK;
+    vec3 sunC = vec3(0.078, 0.205, 0.042) * tintK * (1.02 + jit * 0.25);
+    float farSide = max(smoothstep(-0.2, -0.55, ndl + jit * 0.35), smoothstep(-0.3, -0.8, N.y + jit * 0.25) * 0.2);
+    float upper = smoothstep(0.05, 0.5, N.y + ndl * 0.3 + jit * 0.35);
+    float clump = smoothstep(0.42, 0.62, vnoise(vWPos.xz * 0.55 + vWPos.y * 0.45) * 0.7 + (jit + 0.5) * 0.3);
+    float litC = sunLit * upper * clump;
+    vec3 c = mix(core, band, farSide);
+    c += core * uSkyMid * 0.5 * max(N.y, 0.0) * (1.0 - litC);
+    // Undersides seen from the road: clumpy variation + faint warm ground bounce, never a flat void.
+    float under = smoothstep(-0.1, -0.7, N.y);
+    c *= 1.0 + under * (clump * 0.6 - 0.1);
+    c += vec3(0.012, 0.02, 0.008) * under * (0.5 + jit);
+    c = mix(c, sunC, litC);
+    c = mix(c, vec3(0.12, 0.25, 0.055), leafHi * litC * 0.45);
+    col = c;
   }
   col = applyFog(col, vWPos);
   writeOut(col, N, mask);
@@ -506,29 +545,33 @@ export function cloudMaterial(): THREE.ShaderMaterial {
     uniforms: { ...G, uId: { value: 0 }, uMask: { value: 0 } },
     vertexShader: /* glsl */ `
       in float aH;
-      out vec3 vWPos; out vec3 vN; out float vH;
+      in vec3 aLobe;
+      out vec3 vWPos; out vec3 vN; out vec3 vL; out float vH;
       void main(){
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vWPos = wp.xyz; vN = normalize(mat3(modelMatrix) * normal); vH = aH;
+        vL = mat3(modelMatrix) * (position - aLobe);
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
     fragmentShader: /* glsl */ `
       ${COMMON}
       ${OUT}
-      in vec3 vWPos; in vec3 vN; in float vH;
+      in vec3 vWPos; in vec3 vN; in vec3 vL; in float vH;
       void main(){
-        vec3 N = normalize(vN);
+        // Per-lobe shading: each puff is lit like its own ball, blended with the merged normal.
+        vec3 N = normalize(mix(normalize(vN), normalize(vL), 0.55));
         float n = vnoise3(vWPos * 0.02) * 0.6 + vnoise3(vWPos * 0.06) * 0.4;
-        float t = dot(N, uSunDir) * 0.5 + 0.5 + (n - 0.5) * 0.4;
-        float lit = smoothstep(0.44, 0.48, t);
-        float mid = smoothstep(0.26, 0.3, t);
-        vec3 cTop = vec3(1.0, 0.975, 0.93);
-        vec3 cMid = vec3(0.47, 0.51, 0.67);   // #b7bfd6
-        vec3 cLow = vec3(0.33, 0.38, 0.58);   // #9aa6c8
-        float hg = smoothstep(0.0, 0.45, vH + (n - 0.5) * 0.2);
-        vec3 sh = mix(cLow, cMid, hg);
-        vec3 col = mix(sh * 0.92, sh, mid);
-        col = mix(col, cTop, lit * smoothstep(0.03, 0.25, vH + (n - 0.5) * 0.2));
+        float t = dot(N, uSunDir) * 0.5 + 0.5 + (n - 0.5) * 0.3 + (vH - 0.4) * 0.25;
+        float lit = smoothstep(0.5, 0.54, t);
+        float mid = smoothstep(0.3, 0.34, t);
+        vec3 cTop = vec3(1.0, 0.955, 0.871);  // #fffaf0
+        vec3 cMid = vec3(0.791, 0.799, 0.863); // #e6e7ef
+        vec3 cLow = vec3(0.392, 0.423, 0.597); // #a8aecb
+        // Underside (facing down or low in the cloud) always sits in the cool tone.
+        float under = smoothstep(0.15, -0.35, N.y) * (1.0 - smoothstep(0.1, 0.35, vH));
+        vec3 col = mix(cLow, cMid, mid);
+        col = mix(col, cTop, lit);
+        col = mix(col, cLow, under * 0.85);
         vec3 V = normalize(cameraPosition - vWPos);
         float fr = pow(1.0 - abs(dot(N, V)), 3.0);
         float sunSide = smoothstep(-0.2, 0.4, dot(N, uSunDir));
@@ -567,6 +610,49 @@ export function waterMaterial(): THREE.ShaderMaterial {
       ${OUT}
       uniform sampler2D uRefl; uniform mat4 uReflMat; uniform float uReflOn; uniform float uReflY;
       in vec3 vWPos; in vec2 vUv; in float vP;
+      // Young rice tuft in its vertical sheet: three tapering blades from one root, the centre
+      // upright and two leaning out (V). x = lateral metres from the root, y = height above water.
+      float riceBlades(float x, float y, float H, vec2 rnd, float aa){
+        float cov = 0.0;
+        for (int k = 0; k < 3; k++){
+          float fk = float(k) - 1.0;
+          float bh = H * (k == 1 ? 1.0 : 0.72 + 0.2 * rnd.x);
+          float t = y / bh;
+          if (t > 1.0) continue;
+          float lean = fk * (0.36 + 0.24 * rnd.y) + (rnd.x - 0.5) * 0.14;
+          float xc = lean * bh * t * (0.5 + 0.5 * t);
+          float w = 0.013 * (1.0 - t * 0.88) + 0.0012;
+          float we = max(w, aa);
+          cov = max(cov, clamp((we - abs(x - xc)) / aa + 0.5, 0.0, 1.0) * (w / we));
+        }
+        return cov;
+      }
+      // Walk one family of vertical tuft sheets (planes a = (k+.5)*pa, tufts every pb along b) from
+      // the camera side of the view ray down to the water. Returns (coverage, mean height fraction).
+      vec2 riceSheet(float a0, float b0, float Da, float Db, float vy, float tmax, float H, float pa, float pb, bool swap, float aa){
+        if (abs(Da) < 1e-4) return vec2(0.0);
+        float s = sign(Da);
+        float a1 = a0 + Da * tmax;
+        float k = s > 0.0 ? floor(a1 / pa - 0.5) : ceil(a1 / pa - 0.5);
+        float acc = 0.0, yf = 0.0;
+        for (int n = 0; n < 8; n++){
+          float t = ((k + 0.5) * pa - a0) / Da;
+          if (t < 0.0) break;
+          float y = t * vy;
+          float b = b0 + Db * t;
+          float i = floor(b / pb);
+          vec2 cell = swap ? vec2(k, i) : vec2(i, k);
+          vec2 rnd = vec2(hash12(cell + 7.3), hash12(cell + 19.1));
+          float h = H * (0.85 + 0.3 * rnd.y);
+          float cov = hash12(cell + 3.7) < 0.1 ? 0.0 : riceBlades(b - (i + 0.5) * pb, y, h, rnd, aa);
+          float w = (1.0 - acc) * cov;
+          yf += w * min(y / h, 1.0);
+          acc += w;
+          if (acc > 0.97) break;
+          k -= s;
+        }
+        return vec2(acc, acc > 0.0 ? yf / acc : 0.0);
+      }
       void main(){
         vec3 V = normalize(vWPos - cameraPosition);
         vec2 q = vWPos.xz;
@@ -591,17 +677,38 @@ export function waterMaterial(): THREE.ShaderMaterial {
         float sp = smoothstep(0.86, 0.95, vnoise(q * 6.0 + uTime * 0.8)) * fres;
         col += vec3(1.0, 0.95, 0.8) * sp * 0.25;
 
-        // Sparse rows of young rice: tufts on 0.6 m rows with open water between.
+        // Young rice on a 0.6 x 0.45 m grid: V-shaped three-blade tufts drawn as crossed vertical
+        // sheets intersected along the view ray (real parallax, no geometry). The rows nearest the
+        // road (u > -10.8) are 3D instanced rice; far away the tufts resolve into an average carpet.
         float growth = vP;
-        float row = abs(fract(vUv.x / 0.6) - 0.5) * 0.6;
-        float pl = abs(fract(vUv.y / 0.45) - 0.5) * 0.45;
-        float d = length(vec2(row, pl * 0.8));
-        float rice = 1.0 - smoothstep(0.04 + 0.04 * growth, 0.06 + 0.06 * growth, d);
-        float fw = length(fwidth(vUv / vec2(0.6, 0.45)));
-        rice = mix(rice, 0.18 + 0.25 * growth, smoothstep(0.1, 0.6, fw));
+        float dist = length(vWPos - cameraPosition);
         float sv = shadowVis(vWPos, vec3(0.0, 1.0, 0.0));
-        vec3 riceCol = mix(vec3(0.1, 0.3, 0.035), vec3(0.3, 0.55, 0.07), vnoise(vWPos.xz * 0.9)) * mix(uShadowTint, uSunColor, sv);
-        col = mix(col * mix(0.75, 1.0, sv), riceCol, clamp(rice * (0.75 + 0.3 * growth), 0.0, 0.9));
+        float H = 0.2 + 0.24 * growth;
+        float farK = smoothstep(32.0, 70.0, dist);
+        float drawn = step(vUv.x, -10.8);
+        // uv.x = u = x - roadX(z): slope of that shear, so world ray offsets map into paddy uv.
+        float e = vUv.x - vWPos.x;
+        vec2 dzs = vec2(dFdx(vWPos.z), dFdy(vWPos.z));
+        float sl = dot(vec2(dFdx(e), dFdy(e)), dzs) / max(dot(dzs, dzs), 1e-6);
+        vec2 riceR = vec2(0.0);
+        if (drawn > 0.5 && farK < 1.0) {
+          vec2 D = vec2(-V.x - sl * V.z, -V.z);
+          vec2 Dn = normalize(D + 1e-5);
+          float vy = max(-V.y, 0.02);
+          float tmax = H * 1.15 / vy;
+          float aa = max(dist * 0.0011, 0.002);
+          vec2 ra = riceSheet(vUv.y, vUv.x, D.y, D.x, vy, tmax, H, 0.45, 0.6, false, aa);
+          vec2 rb = riceSheet(vUv.x, vUv.y, D.x, D.y, vy, tmax, H, 0.6, 0.45, true, aa);
+          float cA = ra.x * smoothstep(0.2, 0.5, abs(Dn.y));
+          float cB = rb.x * smoothstep(0.2, 0.5, abs(Dn.x));
+          riceR = vec2(1.0 - (1.0 - cA) * (1.0 - cB), (cA * ra.y + cB * rb.y) / max(cA + cB, 1e-4));
+        }
+        float cov = mix(riceR.x, (0.32 + 0.3 * growth) * drawn, farK);
+        float yf = mix(riceR.y, 0.55, farK);
+        vec3 riceCol = mix(vec3(0.028, 0.072, 0.016), vec3(0.05, 0.147, 0.023), smoothstep(0.0, 0.4, yf));
+        riceCol = mix(riceCol, vec3(0.2, 0.34, 0.075), smoothstep(0.55, 1.0, yf));
+        riceCol *= (0.9 + 0.2 * vnoise(vWPos.xz * 0.9)) * mix(uShadowTint * 1.1, vec3(1.0, 0.97, 0.9), sv);
+        col = mix(col * mix(0.75, 1.0, sv), riceCol, clamp(cov, 0.0, 0.95));
         col = applyFog(col, vWPos);
         writeOut(col, vec3(0.0, 1.0, 0.0), 0.0);
       }`,
@@ -641,16 +748,24 @@ export function roadMaterial(): THREE.ShaderMaterial {
         float jag = (vnoise(vec2(v * 0.55, 3.0 + sign(u) * 9.0)) - 0.5) * 0.55 + (vnoise(vec2(v * 2.6, 7.0 + sign(u) * 5.0)) - 0.5) * 0.22;
         float au = abs(u) + jag;
         // Warm weathered asphalt.
-        vec3 asph = mix(vec3(0.15, 0.13, 0.115), vec3(0.21, 0.185, 0.16), n);
+        // Low-frequency warm/cool drift (#6c5e51 <-> #7a6a55) so the slab never reads as flat grey.
+        float lf = fbm2(vec2(u * 0.18, v * 0.045) + 3.7);
+        vec3 asph = mix(vec3(0.15, 0.114, 0.092), vec3(0.19, 0.145, 0.1), smoothstep(0.3, 0.7, lf));
+        asph *= 0.9 + 0.2 * n;
         float sp = vnoise(vec2(u, v) * 6.0) * 0.6 + vnoise(vec2(u, v) * 17.0) * 0.4;
-        asph *= 0.92 + 0.14 * sp;
-        asph *= 1.0 + 0.1 * smoothstep(0.55, 0.0, abs(abs(u) - 1.1));   // polished tyre tracks
-        // Patch polygons (repairs of different age).
-        vec2 pc = cell(vec2(u * 0.55, v * 0.16));
-        float patchy = step(0.72, pc.y) * step(abs(u), 2.3);
-        asph *= mix(1.0, pc.y > 0.86 ? 0.82 : 1.12, patchy);
-        float seam = (1.0 - smoothstep(0.0, 0.04, pc.x)) * patchy;
-        asph *= 1.0 - seam * 0.35;
+        asph *= 0.94 + 0.1 * sp;
+        // Faint polished tyre tracks (slightly lighter, wavering).
+        float tw = (vnoise(vec2(v * 0.08, 1.0)) - 0.5) * 0.3;
+        float track = smoothstep(0.22, 0.0, abs(abs(u + tw) - 0.95)) * (0.6 + 0.4 * vnoise(vec2(u * 3.0, v * 0.5)));
+        asph *= 1.0 + 0.09 * track;
+        // Repair patches: soft-edged, subtle, irregular (no hard polygon facets).
+        vec2 pc = cell(vec2(u * 0.7, v * 0.2) + vec2(vnoise(vec2(v * 0.3, u)) * 0.6, 0.0));
+        float patchy = step(0.8, pc.y) * step(abs(u), 2.2) * smoothstep(0.02, 0.12, pc.x);
+        asph *= mix(1.0, pc.y > 0.9 ? 0.9 : 1.06, patchy);
+        float seam = (1.0 - smoothstep(0.0, 0.025, pc.x)) * step(0.8, pc.y) * step(abs(u), 2.2);
+        asph *= 1.0 - seam * 0.18;
+        // Darker worn/oily edges before the crumbling margin.
+        asph *= 1.0 - 0.18 * smoothstep(1.5, 2.25, abs(u) + jag * 0.5);
         // Cracks: thin network, denser toward the crumbling edges.
         float cr = abs(vnoise(vec2(u * 2.4, v * 0.8) * 2.2) - 0.5);
         float edgeK = smoothstep(1.2, 2.3, abs(u));
@@ -661,7 +776,7 @@ export function roadMaterial(): THREE.ShaderMaterial {
         line *= 0.16 * (0.4 + 0.6 * vnoise(vec2(u * 20.0, v * 3.0))) * step(0.5, vnoise(vec2(v * 1.7, u)));
         asph = mix(asph, vec3(0.62, 0.6, 0.55), line);
         vec3 dirt = mix(vec3(0.24, 0.19, 0.11), vec3(0.33, 0.27, 0.17), vnoise(vec2(u, v) * 1.8));
-        vec3 grass = mix(vec3(0.05, 0.17, 0.04), vec3(0.09, 0.25, 0.05), fbm2(vWPos.xz * 0.11));
+        vec3 grass = mix(vec3(0.04, 0.12, 0.035), vec3(0.07, 0.18, 0.045), fbm2(vWPos.xz * 0.11));
         vec3 base = asph;
         base = mix(base, dirt, smoothstep(2.3, 2.45, au));
         base = mix(base, grass, smoothstep(2.6, 2.95, au + (n - 0.5) * 0.4));

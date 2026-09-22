@@ -48,6 +48,8 @@ const input = new Input(
   () => audio.start(),
   () => chase.toggle(),
 );
+// B = bicycle bell, M = mute (both also count as the first gesture that starts audio).
+audio.bindKeys();
 
 const hud = document.getElementById("hud")!;
 if (AUTOPLAY || params.has("nohud")) hud.style.display = "none";
@@ -68,6 +70,7 @@ const fpsLog: number[] = [];
 let last = performance.now();
 let t = 0;
 const shadowCenter = new THREE.Vector3();
+let near = { trees: 0, houses: 0 };
 function frame(now: number) {
   let dt = (now - last) / 1000;
   last = now;
@@ -75,7 +78,14 @@ function frame(now: number) {
   t += dt;
   G.uTime.value = t;
 
-  ctl.update(dt, input, (x, z) => world.hit(x, z, 0.35));
+  // Sub-step so a frame hitch can never tunnel the bike through a thin obstacle.
+  const steps = Math.max(1, Math.ceil((Math.abs(ctl.speed) * dt) / 0.15));
+  let bumpMax = 0;
+  for (let i = 0; i < steps; i++) {
+    ctl.update(dt / steps, input, (x, z) => world.contact(x, z, 0.35));
+    bumpMax = Math.max(bumpMax, ctl.bumpImpulse);
+  }
+  ctl.bumpImpulse = bumpMax;
   if (ctl.z < -L) {
     ctl.z += L;
     chase.shift(L);
@@ -94,7 +104,22 @@ function frame(now: number) {
   });
   chase.update(dt, ctl, t, rider);
   sky.follow(chase.cam.position);
-  audio.update(dt, ctl.speed, ctl.cadence, ctl.wheelRate, ctl.pedaling, ctl.braking);
+  if (audio.state === "running") {
+    near = world.closeness(ctl.x, ctl.z);
+    const u = ctl.x - roadX(ctl.z);
+    // Paddies line the left side; the village side on the right is drier.
+    const water = Math.max(0, Math.min(1, 1 - (u + 4.9) / 12)) * (1 - near.houses * 0.5);
+    const roughness = 0.2 + 0.2 * (0.5 + 0.5 * Math.sin(ctl.z * 0.037) * Math.sin(ctl.z * 0.011));
+    audio.update(dt, Math.abs(ctl.speed), Math.abs(ctl.cadence), Math.abs(ctl.wheelRate), ctl.pedaling, ctl.brakePressure, {
+      steer: Math.max(-1, Math.min(1, ctl.steer / 0.3)),
+      bump: ctl.bumpImpulse,
+      roughness,
+      water,
+      trees: near.trees,
+      houses: near.houses,
+      evening: 0.65,
+    });
+  }
 
   // Sun shadow frustum centred ~30 m ahead of the rider (where the camera looks).
   shadowCenter.set(ctl.x - Math.sin(ctl.yaw) * 30, 0, ctl.z - Math.cos(ctl.yaw) * 30);

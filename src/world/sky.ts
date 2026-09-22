@@ -91,17 +91,25 @@ function cumulus(size: number, tall: number, seed: number): THREE.BufferGeometry
   const n = 24 + Math.round(tall * 6);
   const top = size * (0.5 + tall * 0.55);
   const big: { x: number; y: number; z: number; rad: number }[] = [];
+  const lobe = (g: THREE.BufferGeometry, x: number, y: number, z: number) => {
+    const c = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < c.length; k += 3) (c[k] = x), (c[k + 1] = y), (c[k + 2] = z);
+    g.setAttribute("aLobe", new THREE.BufferAttribute(c, 3));
+  };
   for (let i = 0; i < n; i++) {
     const t = i / n;
     const a = r() * Math.PI * 2;
-    const spread = size * (1 - t * 0.72) * range(r, 0.3, 0.95);
+    // Base lobes stay tucked in so the flat floor is one clean line, not stacked slabs.
+    const spread = size * (1 - t * 0.72) * range(r, 0.3, 0.95) * (0.7 + 0.3 * Math.min(1, t * 4));
     const y = t * top * range(r, 0.72, 1.0);
     const rad = size * range(r, 0.22, 0.36) * (1 - t * 0.35);
     const x = Math.cos(a) * spread, z = Math.sin(a) * spread * 0.55;
     const g = blob(rad, 2, 0.12, seed + i * 3.7);
-    g.translate(x, y + rad * 0.3, z);
+    const cy = y + rad * 0.5;
+    g.translate(x, cy, z);
+    lobe(g, x, cy, z);
     parts.push(g);
-    big.push({ x, y: y + rad * 0.3, z, rad });
+    big.push({ x, y: cy, z, rad });
   }
   // Secondary cauliflower lobes on the upper surfaces.
   for (let i = 0; i < 34; i++) {
@@ -110,7 +118,9 @@ function cumulus(size: number, tall: number, seed: number): THREE.BufferGeometry
     const s = Math.sqrt(1 - u * u);
     const rad = b.rad * range(r, 0.22, 0.38);
     const g = blob(rad, 1, 0.15, seed + 100 + i);
-    g.translate(b.x + Math.cos(a) * s * b.rad * 0.92, b.y + u * b.rad * 0.92, b.z + Math.sin(a) * s * b.rad * 0.92);
+    const lx = b.x + Math.cos(a) * s * b.rad * 0.92, ly = b.y + u * b.rad * 0.92, lz = b.z + Math.sin(a) * s * b.rad * 0.92;
+    g.translate(lx, ly, lz);
+    lobe(g, lx, ly, lz);
     parts.push(g);
   }
   const merged = mergeGeometries(parts, false)!;
@@ -119,7 +129,11 @@ function cumulus(size: number, tall: number, seed: number): THREE.BufferGeometry
   const floor = size * 0.14;
   for (let i = 0; i < p.count; i++) {
     let y = p.getY(i);
-    if (y < floor) y = floor - (floor - y) * 0.02; // clip to a flat horizontal base
+    // Flat horizontal base with a slightly rounded lip (no hard step where lobes are cut).
+    if (y < floor + size * 0.04) {
+      const d = floor + size * 0.04 - y;
+      y = floor + size * 0.04 - (size * 0.04) * (1 - Math.exp(-d / (size * 0.04)));
+    }
     p.setY(i, y);
     ymin = Math.min(ymin, y);
     ymax = Math.max(ymax, y);
