@@ -1,8 +1,9 @@
 node_modules
 dist
-.vercel/
-.env*
-shots/critic-*/
+shots
+refs
 *.log
 *.mp4
 *.webm
+.env*
+.vercel
