@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { M, prep, windByHeight } from "./geo";
+import { M, merge, prep, windByHeight } from "./geo";
 import { mulberry32, range } from "../core/rng";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 
@@ -8,7 +8,9 @@ const _c0 = new THREE.Color();
 const _c1 = new THREE.Color();
 
 /** Clump of curved tapered blades with a dark-root → bright-tip gradient. Base at y=0, height ~1. */
-function blades(n: number, h: number, w: number, lean: number, root: string, tip: string, seed: number, spread: number): Geo {
+const _cm = new THREE.Color();
+
+function blades(n: number, h: number, w: number, lean: number, root: string, tip: string, seed: number, spread: number, mid?: string): Geo {
   const r = mulberry32(seed);
   const seg = 3;
   const pos: number[] = [];
@@ -34,7 +36,11 @@ function blades(n: number, h: number, w: number, lean: number, root: string, tip
       const hw = bw * (1 - t * 0.92) * 0.5;
       const cx = ox + dirx * off, cz = oz + dirz * off;
       pos.push(cx - px * hw, y, cz - pz * hw, cx + px * hw, y, cz + pz * hw);
-      c.copy(_c0).lerp(_c1, Math.pow(t, 0.8));
+      if (mid) {
+        _cm.set(mid);
+        if (t < 0.5) c.copy(_c0).lerp(_cm, t * 2);
+        else c.copy(_cm).lerp(_c1, Math.pow((t - 0.5) * 2, 0.9));
+      } else c.copy(_c0).lerp(_c1, Math.pow(t, 0.8));
       col.push(c.r, c.g, c.b, c.r, c.g, c.b);
     }
     for (let i = 0; i < seg; i++) {
@@ -52,16 +58,23 @@ function blades(n: number, h: number, w: number, lean: number, root: string, tip
   return g;
 }
 
-export const grassClump = (seed: number) => blades(6, 1.0, 0.075, 0.35, "#2f5a1c", "#a9cf55", seed, 0.12);
-export const riceTuft = (seed: number) => blades(7, 0.5, 0.03, 0.28, "#3c7a22", "#b4e062", seed, 0.04);
-export const shortGrass = (seed: number) => blades(5, 0.45, 0.06, 0.4, "#3d6d20", "#98c24a", seed, 0.1);
+export const grassClump = (seed: number) => blades(9, 0.85, 0.045, 0.12, "#2f5e2a", "#9cd060", seed, 0.14, "#4f8a38");
+export const riceTuft = (seed: number) => blades(6, 0.42, 0.024, 0.22, "#2f6a24", "#a8d85a", seed, 0.03, "#4f8a30");
+export const shortGrass = (seed: number) => blades(6, 0.4, 0.04, 0.2, "#2f5e2a", "#8cc454", seed, 0.1, "#4a8236");
 
 /** Wildflower head: small star of petals on a thin stem. */
+/** Wildflower: alpha-cut five-petal card facing up/out on a thin stem (instance origin = bloom). */
 export function flower(): Geo {
-  const g = new THREE.IcosahedronGeometry(0.055, 0);
-  g.scale(1, 0.55, 1);
-  g.translate(0, 0, 0);
-  return prep(g, "#ffffff", M.plain);
+  const card = new THREE.PlaneGeometry(0.13, 0.13);
+  card.rotateX(-Math.PI / 2 + 0.55);
+  const stem = new THREE.CylinderGeometry(0.005, 0.007, 0.7, 3, 1);
+  stem.translate(0, -0.36, 0);
+  return merge([prep(card, "#ffffff", M.flower), prep(stem, "#3f6a2a", M.plain, 0.6)]);
+}
+
+/** Light mote / seed fluff billboard (placed + wrapped around the camera in the vertex shader). */
+export function mote(): Geo {
+  return prep(new THREE.PlaneGeometry(0.06, 0.06), "#ffffff", M.mote);
 }
 
 /** Lavender-style flower spike: tapering stack of petal clusters on a stem. */

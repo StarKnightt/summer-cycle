@@ -1,187 +1,190 @@
 /**
- * Everything is synthesised with Web Audio (no files):
- *   chain      soft ticks locked to the crank while pedalling; faster freewheel ticks when coasting
- *   wind       band-passed noise, louder and brighter with speed
- *   tyres      low rumble of the asphalt under the wheels
- *   birds      occasional chirp phrases (swept sine bursts), panned left/right
- *   ambience   quiet countryside bed: low drone + distant cicada shimmer
+ * Ride soundscape — everything is synthesised at runtime with Web Audio (no audio files).
+ * The engine lives in ./sound/: bicycle, wind + leaf rustle, cicadas (higurashi / minmin / far chorus),
+ * birds (songbirds, uguisu, kite, crow), irrigation water + frogs, and a warm ambience bed with rare
+ * furin, temple-bell and level-crossing details, all through an open-air convolution reverb and a
+ * compressor → limiter → soft-clip master bus.
+ *
+ * ── Wiring guide ────────────────────────────────────────────────────────────────────────────────
+ *   const audio = new RideAudio();
+ *   new Input(() => audio.start());            // start() must run inside a user gesture (autoplay policy)
+ *   audio.bindKeys();                          // optional: B = bell, M = mute (returns an unbind function)
+ *
+ *   // every frame (unchanged signature; the 7th argument is optional):
+ *   audio.update(dt, ctl.speed, ctl.cadence, ctl.wheelRate, ctl.pedaling, ctl.braking, {
+ *     steer: ctl.steer / 0.3,     // -1…1, wind shifts slightly toward the turn
+ *     bump: 0,                    // 0…1 impulse on the frame the wheel hits a seam/pothole (basket rattle)
+ *     roughness: 0.25,            // 0 smooth asphalt … 1 rough/gravel (more tyre noise, more random bumps)
+ *     water: 0…1,                 // closeness to paddies / irrigation channels (trickling water, frogs)
+ *     trees: 0…1,                 // closeness to trees (leaf rustle)
+ *     houses: 0…1,                // closeness to houses (furin wind chimes ring more often)
+ *     evening: 0.65,              // 0 midday … 1 dusk (more higurashi, fewer minmin)
+ *   });
+ *   Any omitted extra gets a default; water/trees/houses then drift slowly with distance ridden.
+ *   `braking` may be a boolean or a 0…1 brake pressure.
+ *
+ *   audio.ringBell();  audio.bump(0.8);  audio.toggleMute();  audio.setMasterVolume(0…1);
+ *   audio.trigger("furin" | "temple" | "crossing" | "uguisu" | "kite" | "crow" | "frog" | "higurashi" | "minmin" | "bell" | "bump");
+ * ────────────────────────────────────────────────────────────────────────────────────────────────
  */
+import { SoundEngine, type SoundEvent } from "./sound/engine";
+
+export type { SoundEvent } from "./sound/engine";
+
+export interface RideAudioExtras {
+  steer?: number;
+  bump?: number;
+  roughness?: number;
+  water?: number;
+  trees?: number;
+  houses?: number;
+  evening?: number;
+}
+
+const PREFS_KEY = "ghibli-ride:audio";
+const FADE_IN = 2.5;
+
 export class RideAudio {
   private ctx: AudioContext | null = null;
-  private master!: GainNode;
-  private noise!: AudioBuffer;
-  private windGain!: GainNode;
-  private windFilter!: BiquadFilterNode;
-  private tyreGain!: GainNode;
-  private tickPhase = 0;
-  private birdT = 2;
+  private engine: SoundEngine | null = null;
+  private vol = 0.8;
+  private mute = false;
+  private hideTimer = 0;
+  private onVis = () => this.visibility();
 
+  constructor() {
+    try {
+      const p = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as { volume?: number; muted?: boolean };
+      if (typeof p.volume === "number" && Number.isFinite(p.volume)) this.vol = Math.min(1, Math.max(0, p.volume));
+      if (typeof p.muted === "boolean") this.mute = p.muted;
+    } catch {
+      /* private mode / no storage */
+    }
+  }
+
+  /** "off" before start(), otherwise the AudioContext state. */
   get state(): string {
     return this.ctx ? this.ctx.state : "off";
   }
 
+  get muted(): boolean {
+    return this.mute;
+  }
+
+  get volume(): number {
+    return this.vol;
+  }
+
+  /** Create (or resume) the audio context. Call from a user gesture. */
   start(): void {
     if (this.ctx) {
-      if (this.ctx.state === "suspended") void this.ctx.resume();
+      if (this.ctx.state === "suspended" && !document.hidden) void this.ctx.resume();
       return;
     }
-    const ctx = new AudioContext();
+    const AC: typeof AudioContext | undefined = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC({ latencyHint: "interactive" });
     this.ctx = ctx;
-    this.master = ctx.createGain();
-    this.master.gain.value = 0;
-    this.master.gain.linearRampToValueAtTime(0.7, ctx.currentTime + 2);
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14;
-    comp.ratio.value = 4;
-    this.master.connect(comp).connect(ctx.destination);
-
-    const len = ctx.sampleRate * 3;
-    this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
-    const d = this.noise.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-
-    // Wind.
-    this.windFilter = ctx.createBiquadFilter();
-    this.windFilter.type = "bandpass";
-    this.windFilter.frequency.value = 500;
-    this.windFilter.Q.value = 0.5;
-    this.windGain = ctx.createGain();
-    this.windGain.gain.value = 0;
-    this.loop().connect(this.windFilter).connect(this.windGain).connect(this.master);
-    const lfo = ctx.createOscillator();
-    lfo.frequency.value = 0.09;
-    const lfoG = ctx.createGain();
-    lfoG.gain.value = 160;
-    lfo.connect(lfoG).connect(this.windFilter.frequency);
-    lfo.start();
-
-    // Tyre rumble.
-    const tf = ctx.createBiquadFilter();
-    tf.type = "lowpass";
-    tf.frequency.value = 180;
-    this.tyreGain = ctx.createGain();
-    this.tyreGain.gain.value = 0;
-    this.loop().connect(tf).connect(this.tyreGain).connect(this.master);
-
-    // Ambient drone: two soft detuned sines through a lowpass.
-    const dg = ctx.createGain();
-    dg.gain.value = 0.018;
-    const dl = ctx.createBiquadFilter();
-    dl.type = "lowpass";
-    dl.frequency.value = 400;
-    for (const f of [98, 147.3, 196.5]) {
-      const o = ctx.createOscillator();
-      o.type = "sine";
-      o.frequency.value = f;
-      o.connect(dl);
-      o.start();
-    }
-    dl.connect(dg).connect(this.master);
-    // Distant cicadas: high band noise with a fast tremolo, slowly breathing.
-    const cf = ctx.createBiquadFilter();
-    cf.type = "bandpass";
-    cf.frequency.value = 5200;
-    cf.Q.value = 3;
-    const cg = ctx.createGain();
-    cg.gain.value = 0.0;
-    const trem = ctx.createOscillator();
-    trem.frequency.value = 38;
-    const tremG = ctx.createGain();
-    tremG.gain.value = 0.012;
-    trem.connect(tremG).connect(cg.gain);
-    trem.start();
-    const breathe = ctx.createOscillator();
-    breathe.frequency.value = 0.05;
-    const bg = ctx.createGain();
-    bg.gain.value = 0.006;
-    breathe.connect(bg).connect(cg.gain);
-    breathe.start();
-    this.loop().connect(cf).connect(cg).connect(this.master);
+    this.engine = new SoundEngine(ctx, ctx.destination, { lazy: true });
+    this.engine.setVolume(0, ctx.currentTime, 0.01);
+    this.applyVolume(FADE_IN / 3);
+    document.addEventListener("visibilitychange", this.onVis);
+    if (ctx.state === "suspended") void ctx.resume();
   }
 
-  update(dt: number, speed: number, crankRate: number, wheelRate: number, pedaling: number, braking: boolean): void {
+  update(dt: number, speed: number, crankRate: number, wheelRate: number, pedaling: number, braking: boolean | number, extras?: RideAudioExtras): void {
     const ctx = this.ctx;
-    if (!ctx) return;
-    const t = ctx.currentTime;
-    const s = Math.min(speed / 10, 1);
-    this.windGain.gain.setTargetAtTime(0.015 + s * s * 0.12, t, 0.2);
-    this.windFilter.frequency.setTargetAtTime(350 + s * 900, t, 0.3);
-    this.tyreGain.gain.setTargetAtTime(s * 0.07, t, 0.2);
+    if (!ctx || !this.engine || ctx.state !== "running") return;
+    this.engine.tick(ctx.currentTime, dt, {
+      speed,
+      crank: crankRate,
+      wheel: wheelRate,
+      pedal: pedaling,
+      brake: typeof braking === "number" ? braking : braking ? 1 : 0,
+      ...extras,
+    });
+  }
 
-    // Chain / freewheel ticks.
-    const coasting = pedaling < 0.5;
-    const rate = coasting ? wheelRate * 9 : crankRate * 6;
-    if (speed > 0.3 && !braking) {
-      this.tickPhase += rate * dt;
-      while (this.tickPhase >= 1) {
-        this.tickPhase -= 1;
-        if (coasting) this.click(t + Math.random() * 0.004, 5200, 0.018, 0.018);
-        else this.click(t + Math.random() * 0.006, 2400 + Math.random() * 400, 0.012, 0.03);
+  /** Mamachari bell "chirin-chirin". Starts audio if needed. */
+  ringBell(): void {
+    this.start();
+    if (this.ctx && this.engine) this.engine.ringBell(this.ctx.currentTime + 0.01);
+  }
+
+  /** Basket/mudguard rattle, strength 0…1. */
+  bump(strength = 0.6): void {
+    if (this.ctx && this.engine) this.engine.bump(this.ctx.currentTime + 0.01, strength);
+  }
+
+  /** Fire a specific sound now (handy for cutscenes and testing). */
+  trigger(ev: SoundEvent): void {
+    if (this.ctx && this.engine) this.engine.trigger(ev, this.ctx.currentTime + 0.02);
+  }
+
+  /** 0…1 (persisted). */
+  setMasterVolume(v: number): void {
+    this.vol = Math.min(1, Math.max(0, Number.isFinite(v) ? v : this.vol));
+    this.applyVolume();
+    this.save();
+  }
+
+  setMuted(m: boolean): void {
+    this.mute = m;
+    this.applyVolume();
+    this.save();
+  }
+
+  toggleMute(): boolean {
+    this.setMuted(!this.mute);
+    return this.mute;
+  }
+
+  /** B = bell, M = mute. Returns a function that removes the listener. */
+  bindKeys(target: Window = window): () => void {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (e.code === "KeyB") this.ringBell();
+      else if (e.code === "KeyM") {
+        this.start();
+        this.toggleMute();
       }
+    };
+    target.addEventListener("keydown", onKey);
+    return () => target.removeEventListener("keydown", onKey);
+  }
+
+  dispose(): void {
+    document.removeEventListener("visibilitychange", this.onVis);
+    clearTimeout(this.hideTimer);
+    void this.ctx?.close();
+    this.ctx = null;
+    this.engine = null;
+  }
+
+  private applyVolume(tau = 0.08): void {
+    if (this.ctx && this.engine) this.engine.setVolume(this.mute ? 0 : this.vol, this.ctx.currentTime, tau);
+  }
+
+  private save(): void {
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ volume: this.vol, muted: this.mute }));
+    } catch {
+      /* ignore */
     }
-
-    this.birdT -= dt;
-    if (this.birdT <= 0) {
-      this.bird(t);
-      this.birdT = 3 + Math.random() * 6;
-    }
   }
 
-  private loop(): AudioBufferSourceNode {
-    const src = this.ctx!.createBufferSource();
-    src.buffer = this.noise;
-    src.loop = true;
-    src.start(0, Math.random() * 2);
-    return src;
-  }
-
-  private click(t: number, freq: number, gain: number, dur: number): void {
-    const ctx = this.ctx!;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    const f = ctx.createBiquadFilter();
-    f.type = "bandpass";
-    f.frequency.value = freq;
-    f.Q.value = 4;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(gain, t + 0.001);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f).connect(g).connect(this.master);
-    src.start(t, Math.random() * 2);
-    src.stop(t + dur + 0.02);
-  }
-
-  private bird(t0: number): void {
-    const ctx = this.ctx!;
-    const pan = ctx.createStereoPanner();
-    pan.pan.value = Math.random() * 1.6 - 0.8;
-    const out = ctx.createGain();
-    out.gain.value = 0.05 + Math.random() * 0.04;
-    out.connect(pan).connect(this.master);
-    const kind = Math.random();
-    const n = 2 + Math.floor(Math.random() * 5);
-    const base = 2600 + Math.random() * 1800;
-    let t = t0;
-    for (let i = 0; i < n; i++) {
-      const o = ctx.createOscillator();
-      o.type = "sine";
-      const g = ctx.createGain();
-      const dur = kind < 0.5 ? 0.07 + Math.random() * 0.05 : 0.14 + Math.random() * 0.08;
-      const f0 = base * (0.9 + Math.random() * 0.25);
-      o.frequency.setValueAtTime(f0, t);
-      if (kind < 0.5) o.frequency.exponentialRampToValueAtTime(f0 * 1.45, t + dur);
-      else {
-        o.frequency.exponentialRampToValueAtTime(f0 * 1.3, t + dur * 0.4);
-        o.frequency.exponentialRampToValueAtTime(f0 * 0.8, t + dur);
-      }
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(1, t + 0.012);
-      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      o.connect(g).connect(out);
-      o.start(t);
-      o.stop(t + dur + 0.02);
-      t += dur + 0.03 + Math.random() * 0.08;
+  /** Fade out and suspend while the tab is hidden; fade back in when it returns. */
+  private visibility(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.engine) return;
+    clearTimeout(this.hideTimer);
+    if (document.hidden) {
+      this.engine.setVolume(0, ctx.currentTime, 0.04);
+      this.hideTimer = window.setTimeout(() => void ctx.suspend(), 250);
+    } else {
+      void ctx.resume().then(() => this.applyVolume(0.3));
     }
   }
 }

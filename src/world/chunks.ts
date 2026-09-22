@@ -4,6 +4,7 @@ import { ID, M, box, merge, prep, shear, wire, xf } from "./geo";
 import { fence, house, pole, postBox, stoneMarker, tree, warningSign, type TreeKind } from "./props";
 import { boulder, butterfly, flower, flowerSpike, grassClump, riceTuft, shortGrass } from "./vegetation";
 import { roadMaterial, uber, waterMaterial } from "../render/materials";
+import { LAYER_REFLECT, LAYER_SHADOW, onLayers } from "../render/lightpasses";
 import { mulberry32, pick, range, type Rng } from "../core/rng";
 
 type Geo = THREE.BufferGeometry;
@@ -39,17 +40,22 @@ interface HouseSpot {
   ac?: boolean;
   balcony?: boolean;
   seed: number;
+  /** Yaw relative to the road: 0 = front faces the approaching rider, negative turns it roadward. */
+  tilt?: number;
 }
 
-/** Village clusters (periodic z). The first sits right ahead of the spawn point. */
+/**
+ * Village clusters (periodic z). w = front width (lateral), d = depth (along the road), u = the
+ * road-side wall's offset. Fronts face the approaching rider like the reference street.
+ */
 const HOUSES: HouseSpot[] = [
-  { z: -46, w: 7.2, d: 6.4, floors: 2, u: 8.2, ac: true, seed: 11 },
-  { z: -60, w: 6.6, d: 6.0, floors: 2, shop: true, u: 7.4, ac: true, balcony: false, seed: 23 },
-  { z: -74.5, w: 7.6, d: 6.8, floors: 2, u: 8.6, seed: 37 },
-  { z: -91, w: 6.8, d: 6.2, floors: 1, u: 8.0, ac: true, seed: 41 },
-  { z: -228, w: 8.2, d: 7.0, floors: 2, u: 9.5, ac: true, seed: 53 },
-  { z: -244, w: 6.0, d: 5.4, floors: 1, u: 8.4, seed: 67 },
-  { z: -505, w: 7.4, d: 6.6, floors: 2, u: 9.0, seed: 79, ac: true },
+  { z: -40, w: 7.2, d: 6.2, floors: 2, u: 7.6, ac: true, seed: 11, tilt: -0.22 },
+  { z: -53, w: 6.6, d: 6.0, floors: 2, shop: true, u: 6.4, ac: true, balcony: false, seed: 23, tilt: -0.45 },
+  { z: -67, w: 7.6, d: 6.6, floors: 2, u: 8.2, seed: 37, tilt: -0.15 },
+  { z: -82, w: 6.8, d: 6.0, floors: 1, u: 7.4, ac: true, seed: 41, tilt: -0.3 },
+  { z: -228, w: 8.2, d: 7.0, floors: 2, u: 8.6, ac: true, seed: 53, tilt: -0.2 },
+  { z: -244, w: 6.0, d: 5.4, floors: 1, u: 7.8, seed: 67, tilt: -0.35 },
+  { z: -505, w: 7.4, d: 6.6, floors: 2, u: 8.4, seed: 79, ac: true, tilt: -0.25 },
 ];
 
 const SIGNS = [
@@ -72,16 +78,17 @@ const GUARDRAIL_RIGHT: [number, number][] = [
   [-452, -486],
 ];
 
-const inVillage = (z: number) => HOUSES.some((h) => Math.abs(z - h.z) < h.w / 2 + 2.5);
+const inVillage = (z: number) => HOUSES.some((h) => z < h.z + h.d / 2 + 5 && z > h.z - h.d / 2 - 2.5);
 /** Keep sightlines to the houses open: no big roadside trees just before a cluster. */
-const nearVillage = (z: number) => HOUSES.some((h) => z - h.z < 40 && z - h.z > -h.w);
-const nearShopFront = (z: number) => Math.abs(z - -60) < 3.4;
+const nearVillage = (z: number) => HOUSES.some((h) => z - h.z < 42 && z - h.z > -h.d);
+const SHOP_Z = -53;
+const nearShopFront = (z: number) => z < SHOP_Z + 7 && z > SHOP_Z - 2;
 const villageLot = (u: number, z: number) => {
-  for (const h of HOUSES) if (Math.abs(z - h.z) < h.w / 2 + 1.2 && u > 3.6 && u < h.u + 0.6) return true;
+  for (const h of HOUSES) if (z < h.z + h.d / 2 + 4.5 && z > h.z - h.d / 2 - 1 && u > 3.5 && u < h.u + h.w + 1) return true;
   return false;
 };
 const inHouse = (u: number, z: number, pad = 0.8) => {
-  for (const h of HOUSES) if (Math.abs(z - h.z) < h.w / 2 + pad + 1.2 && u > h.u - pad - 1.0 && u < h.u + h.d + pad) return true;
+  for (const h of HOUSES) if (Math.abs(z - h.z) < h.d / 2 + pad + 1.4 && u > h.u - pad - 0.8 && u < h.u + h.w + pad) return true;
   return false;
 };
 
@@ -93,6 +100,7 @@ function paddyLevel(r: number, c: number): number {
 
 let protos: {
   trees: Record<TreeKind, Geo[]>;
+  far: Record<TreeKind, Geo[]>;
   grass: Geo[];
   short: Geo;
   rice: Geo;
@@ -110,6 +118,12 @@ function getProtos() {
         tall: [tree("tall", 4), tree("tall", 5)],
         bush: [tree("bush", 6), tree("bush", 7)],
         cedar: [tree("cedar", 8), tree("cedar", 9)],
+      },
+      far: {
+        round: [tree("round", 11, 1), tree("round", 12, 1)],
+        tall: [tree("tall", 14, 1)],
+        bush: [tree("bush", 16, 1)],
+        cedar: [tree("cedar", 18, 1), tree("cedar", 19, 1)],
       },
       grass: [grassClump(1), grassClump(2), grassClump(3)],
       short: shortGrass(4),
@@ -330,8 +344,9 @@ export function buildChunk(k: number): Chunk {
       // 3D rice in the nearest row.
       if (rr === 0) {
         for (let u = uIn - 0.65; u > uOut + 0.5; u -= 0.6) {
-          for (let z = za - 0.55; z > zb + 0.5; z -= 0.45) {
-            const s = (0.7 + growth * 0.55) * range(r, 0.85, 1.15);
+          for (let z = za - 0.55; z > zb + 0.5; z -= 0.5) {
+            if (r() < 0.3) continue;
+            const s = (0.55 + growth * 0.4) * range(r, 0.85, 1.15);
             pushInst(rice, roadX(z) + u + range(r, -0.05, 0.05), lvl - 0.02, z + range(r, -0.05, 0.05), r() * 6.28, s, s * range(r, 0.9, 1.2), hsl(col("#ffffff"), r, 0.02, 0.0, 0.06));
           }
         }
@@ -362,15 +377,28 @@ export function buildChunk(k: number): Chunk {
   for (const h of HOUSES) {
     if (!inRange(h.z)) continue;
     const g = house({ w: h.w, d: h.d, floors: h.floors, shop: h.shop, seed: h.seed, ac: h.ac, balcony: h.balcony });
-    houseG.push(placeAt(g, h.u + h.d / 2, h.z, faceRoadFromRight(h.z), groundH(h.u, h.z) + 0.02));
-    colliders.push({ x: roadX(h.z) + h.u + h.d / 2, z: h.z, r: Math.max(h.w, h.d) * 0.55 });
+    houseG.push(placeAt(g, h.u + h.w / 2, h.z, roadYaw(h.z) + (h.tilt ?? -0.25), groundH(h.u + 1, h.z) + 0.02));
+    colliders.push({ x: roadX(h.z) + h.u + h.w / 2, z: h.z, r: Math.max(h.w, h.d) * 0.55 });
   }
-  if (inRange(-57)) {
-    infraG.push(placeAt(postBox(), 4.3, -57.2, faceRoadFromRight(-57.2)));
-    colliders.push({ x: roadX(-57.2) + 4.3, z: -57.2, r: 0.35 });
+  // Obstacles that sit inside the guide rails (reachable by steering, clear of the autoplay line
+  // which holds ~0.85 m left of centre): post box and stone marker at the road edge, a pole
+  // standing on the asphalt shoulder as rural Japanese poles often do.
+  const obstacle = (g: Geo, u: number, z: number, ry: number, rad: number) => {
+    if (!inRange(z)) return;
+    infraG.push(placeAt(g, u, z, ry));
+    colliders.push({ x: roadX(z) + u, z, r: rad });
+  };
+  obstacle(postBox(), 2.55, SHOP_Z + 5.5, faceRoadFromRight(SHOP_Z + 5.5), 0.3);
+  obstacle(stoneMarker(), 2.5, -140, faceRoadFromRight(-140), 0.22);
+  obstacle(stoneMarker(), -4.05, -205, faceRoadFromRight(-205) + Math.PI, 0.22);
+  if (inRange(-300)) {
+    const ep = pole(8.2, false);
+    obstacle(ep.geo, 2.6, -300, roadYaw(-300), 0.22);
   }
-  if (inRange(-205)) infraG.push(placeAt(stoneMarker(), -4.05, -205, faceRoadFromRight(-205) + Math.PI));
-  if (inRange(-212)) infraG.push(placeAt(stoneMarker(), 4.0, -212, faceRoadFromRight(-212)));
+  if (inRange(-380)) {
+    const ep = pole(8.2, true);
+    obstacle(ep.geo, -2.65, -380, roadYaw(-380), 0.22);
+  }
 
   // ---- poles + wires
   const nPoles = L / POLE_SPACING;
@@ -444,19 +472,27 @@ export function buildChunk(k: number): Chunk {
 
   // ---- trees
   const trees: Record<string, Inst> = {};
-  const addTree = (kind: TreeKind, u: number, z: number, s: number) => {
-    const variants = P.trees[kind];
+  const farTrees: Record<string, Inst> = {};
+  const addTree = (kind: TreeKind, u: number, z: number, s: number, far = false) => {
+    const variants = far ? P.far[kind] : P.trees[kind];
     const vi = Math.floor(r() * variants.length);
     const key = `${kind}${vi}`;
-    (trees[key] ??= newInst());
-    pushInst(trees[key], roadX(z) + u, groundH(u, z) - 0.1, z, r() * 6.28, s, s * range(r, 0.9, 1.1), hsl(col("#ffffff"), r, 0.015, 0.05, 0.05));
+    const bucket = far ? farTrees : trees;
+    (bucket[key] ??= newInst());
+    pushInst(bucket[key], roadX(z) + u, groundH(u, z) - 0.1, z, r() * 6.28, s, s * range(r, 0.9, 1.1), hsl(col("#ffffff"), r, 0.015, 0.05, 0.05));
     if (Math.abs(u) < 14) colliders.push({ x: roadX(z) + u, z, r: 0.5 * s });
   };
-  // Village backdrop: big dark trees behind the houses (as in the reference).
+  // Village backdrop: a big dark tree mass behind the houses (as in the reference).
   for (const h of HOUSES) {
     if (!inRange(h.z)) continue;
-    addTree(pick(r, ["round", "round", "tall"] as TreeKind[]), h.u + h.d + range(r, 4, 9), h.z + range(r, -4, 4), range(r, 1.2, 1.6));
-    if (r() > 0.3) addTree("bush", h.u - 0.4, h.z + h.w / 2 + 1.2, range(r, 0.7, 1.0));
+    addTree(pick(r, ["round", "round", "tall"] as TreeKind[]), h.u + h.w + range(r, 3, 7), h.z + range(r, -4, 2), range(r, 1.35, 1.7));
+    addTree("round", h.u + h.w + range(r, 9, 14), h.z + range(r, -6, 6), range(r, 1.3, 1.8));
+    if (r() > 0.3) addTree("bush", h.u - 0.2, h.z + h.d / 2 + 2.6, range(r, 0.7, 1.0));
+  }
+  // Trees on the paddy-side berm: the low sun throws their dappled shadows across the road.
+  for (const lz of [-0.5, -26, -118, -170, -262, -330, -445, -520, -600]) {
+    if (!inRange(lz)) continue;
+    addTree(lz === -0.5 ? "round" : pick(r, ["round", "tall"] as TreeKind[]), -5.3, lz, range(r, 1.0, 1.25));
   }
   for (let z = z0 - range(r, 2, 10); z > z1; z -= range(r, 9, 22)) {
     // Roadside trees on the right (skip the village lots).
@@ -473,7 +509,7 @@ export function buildChunk(k: number): Chunk {
   for (let i = 0; i < 70; i++) {
     const z = range(r, z1, z0);
     const u = range(r, 46, 250);
-    addTree(r() > 0.45 ? "cedar" : "round", u, z, range(r, 1.1, 1.9));
+    addTree(r() > 0.45 ? "cedar" : "round", u, z, range(r, 1.1, 1.9), u > 70);
   }
   // A few trees out in the fields / on far berms.
   for (let i = 0; i < 4; i++) {
@@ -485,9 +521,9 @@ export function buildChunk(k: number): Chunk {
   for (let gi = 0; gi < 2; gi++) {
     const gz = range(r, z1, z0);
     const gu = range(r, uFar - 50, uFar - 240);
-    for (let i = 0; i < 9; i++) addTree(r() > 0.45 ? "round" : "cedar", gu + range(r, -14, 14), gz + range(r, -12, 12), range(r, 1.0, 1.7));
+    for (let i = 0; i < 9; i++) addTree(r() > 0.45 ? "round" : "cedar", gu + range(r, -14, 14), gz + range(r, -12, 12), range(r, 1.0, 1.7), true);
   }
-  for (let i = 0; i < 4; i++) addTree("round", range(r, uFar - 40, uFar - 260), range(r, z1, z0), range(r, 1.0, 1.5));
+  for (let i = 0; i < 4; i++) addTree("round", range(r, uFar - 40, uFar - 260), range(r, z1, z0), range(r, 1.0, 1.5), true);
 
   // ---- grass, flowers, butterflies
   const grass = [newInst(), newInst(), newInst()];
@@ -500,22 +536,30 @@ export function buildChunk(k: number): Chunk {
   };
   const area = CHUNK;
   // Right verge: tall and dense. Left verge: between road and paddy berm.
-  for (let i = 0; i < area * 2.6 * 5.5; i++) {
+  for (let i = 0; i < area * 2.6 * 7; i++) {
     const z = range(r, z1, z0);
     const u = 2.8 + Math.pow(r(), 0.8) * 2.8;
     if (inVillage(z) && (u > 4.2 || nearShopFront(z))) continue;
-    addGrass(u, z, range(r, 0.55, 1.25) * smooth(2.7, 3.6, u) + 0.25);
+    addGrass(u, z, range(r, 0.5, 1.05) * smooth(2.7, 3.6, u) + 0.22);
   }
-  for (let i = 0; i < area * 1.7 * 5; i++) {
+  // Left verge kept low so the mirror paddies read from the chase camera.
+  for (let i = 0; i < area * 1.7 * 6; i++) {
     const z = range(r, z1, z0);
     const u = -2.8 - r() * 1.75;
-    addGrass(u, z, range(r, 0.5, 1.15) * smooth(-2.7, -3.5, u) + 0.2);
+    addGrass(u, z, range(r, 0.3, 0.5) * smooth(-2.7, -3.4, u) + 0.12);
   }
-  for (let i = 0; i < area * 24 * 0.45; i++) {
+  for (let i = 0; i < area * 24 * 0.5; i++) {
     const z = range(r, z1, z0);
     const u = range(r, 5.6, 30);
-    if (inVillage(z) && u < 18) continue;
-    addGrass(u, z, range(r, 0.8, 1.6));
+    if (inVillage(z) && u < 20) continue;
+    addGrass(u, z, range(r, 0.7, 1.3));
+  }
+  // Weeds pushing through the crumbling asphalt edges.
+  const weeds = newInst();
+  for (let z = z0; z > z1; z -= range(r, 0.6, 2.2)) {
+    const s = r() > 0.5 ? 1 : -1;
+    const u = s * range(r, 2.15, 2.5);
+    pushInst(weeds, roadX(z) + u, 0.0, z, r() * 6.28, range(r, 0.35, 0.7), undefined, hsl(gBase, r, 0.02, 0.05, 0.06));
   }
   const FLOWER = ["#f7f3ea", "#f7f3ea", "#f3d23c", "#f3d23c", "#ec8fb6", "#b09ae0", "#f39a3c"].map(col);
   const addFlower = (u: number, z: number) => {
@@ -529,7 +573,7 @@ export function buildChunk(k: number): Chunk {
   const spikes = newInst();
   const rocks = [newInst(), newInst()];
   const SPIKE = ["#a898e2", "#a898e2", "#b9a8ee", "#e06a6a", "#f09ab8"].map(col);
-  const FLY = [col("#f8d84a"), col("#f8d84a"), col("#f8d84a"), col("#fbf6e8")];
+  const FLY = [col("#f2d04a"), col("#f2d04a"), col("#fff4c0"), col("#fff4c0")];
   const patches: { u: number; z: number }[] = [];
   for (let i = 0; i < 5; i++) {
     const left = r() < 0.35;
@@ -545,7 +589,7 @@ export function buildChunk(k: number): Chunk {
     }
     for (let i = 0; i < 5; i++) {
       const z = p.z + range(r, -2.5, 2.5);
-      pushInst(flies, roadX(z) + p.u + range(r, -1, 1), range(r, 0.7, 1.5), z, r() * 6.28, range(r, 1.2, 1.5), undefined, pick(r, FLY));
+      pushInst(flies, roadX(z) + p.u + range(r, -1, 1), range(r, 0.7, 1.5), z, r() * 6.28, range(r, 0.45, 0.6), undefined, pick(r, FLY));
     }
     // Mossy boulder anchoring the patch (away from the road edge).
     if (r() > 0.35) {
@@ -556,7 +600,7 @@ export function buildChunk(k: number): Chunk {
   for (let i = 0; i < 10; i++) {
     const u = r() > 0.35 ? range(r, 3.2, 6.5) : range(r, -4.4, -3.0);
     const z = range(r, z1, z0);
-    pushInst(flies, roadX(z) + u, range(r, 0.55, 1.3), z, r() * 6.28, range(r, 1.1, 1.4), undefined, pick(r, FLY));
+    pushInst(flies, roadX(z) + u, range(r, 0.55, 1.3), z, r() * 6.28, range(r, 0.42, 0.55), undefined, pick(r, FLY));
   }
   // Scattered boulders in the meadow and at the foot of trees.
   for (let i = 0; i < 6; i++) {
@@ -566,28 +610,37 @@ export function buildChunk(k: number): Chunk {
   }
 
   // ---- assemble
-  if (houseG.length) group.add(mesh(merge(houseG), uber(ID.house, 1)));
-  if (infraG.length) group.add(mesh(merge(infraG), uber(ID.pole, 1)));
-  if (wireG.length) group.add(mesh(merge(wireG), uber(ID.wire, 0.8)));
-  if (fenceG.length) group.add(mesh(merge(fenceG), uber(ID.fence, 1)));
-  if (bermG.length) group.add(mesh(merge(bermG), uber(ID.berm, 0.6)));
-  if (waterG.length) {
-    const wg = merge(waterG);
-    group.add(mesh(wg, waterMaterial()));
-  }
-  const add = (o: THREE.Object3D | null) => o && group.add(o);
+  const S = LAYER_SHADOW, R = LAYER_REFLECT;
+  const add = (o: THREE.Object3D | null, ...layers: number[]) => {
+    if (!o) return;
+    onLayers(o, ...layers);
+    group.add(o);
+  };
+  if (houseG.length) add(mesh(merge(houseG), uber(ID.house, 1)), S, R);
+  if (infraG.length) add(mesh(merge(infraG), uber(ID.pole, 1)), S, R);
+  if (wireG.length) add(mesh(merge(wireG), uber(ID.wire, 0.8)), S, R);
+  if (fenceG.length) add(mesh(merge(fenceG), uber(ID.fence, 1, THREE.DoubleSide)), S, R);
+  if (bermG.length) add(mesh(merge(bermG), uber(ID.berm, 0.6)), R);
+  if (waterG.length) add(mesh(merge(waterG), waterMaterial()));
   const dbl = THREE.DoubleSide;
-  add(instMesh(P.rice, uber(ID.rice, 0.25, dbl), rice));
-  add(instMesh(P.short, uber(ID.grass, 0.25, dbl), bermGrass));
-  for (let i = 0; i < 3; i++) add(instMesh(P.grass[i], uber(ID.grass, 0.3, dbl), grass[i]));
-  add(instMesh(P.flower, uber(ID.flower, 0.0), flowers));
-  add(instMesh(P.fly, uber(ID.butterfly, 0, dbl), flies));
-  add(instMesh(P.spike, uber(ID.flower, 0.3), spikes));
-  for (let i = 0; i < 2; i++) add(instMesh(P.rocks[i], uber(ID.fence, 1), rocks[i]));
+  add(instMesh(P.rice, uber(ID.rice, -1, dbl), rice));
+  add(instMesh(P.short, uber(ID.grass, -1, dbl), bermGrass), R);
+  add(instMesh(P.short, uber(ID.grass, -1, dbl), weeds));
+  for (let i = 0; i < 3; i++) add(instMesh(P.grass[i], uber(ID.grass, -1, dbl), grass[i]));
+  add(instMesh(P.flower, uber(ID.flower, -1, dbl), flowers));
+  add(instMesh(P.fly, uber(ID.butterfly, -1, dbl), flies));
+  add(instMesh(P.spike, uber(ID.flower, -1), spikes));
+  for (let i = 0; i < 2; i++) add(instMesh(P.rocks[i], uber(ID.fence, 1), rocks[i]), S);
+  const treeMat = uber(ID.tree, 0.8, dbl);
   for (const [key, list] of Object.entries(trees)) {
     const kind = key.slice(0, -1) as TreeKind;
     const vi = Number(key.slice(-1));
-    add(instMesh(P.trees[kind][vi], uber(ID.tree, 1), list));
+    add(instMesh(P.trees[kind][vi], treeMat, list), S, R);
+  }
+  for (const [key, list] of Object.entries(farTrees)) {
+    const kind = key.slice(0, -1) as TreeKind;
+    const vi = Number(key.slice(-1));
+    add(instMesh(P.far[kind][vi], treeMat, list), R);
   }
   void box;
   return { k, group, colliders };
@@ -615,16 +668,25 @@ export class World {
     }
   }
 
-  /** Circle colliders near (x, z) in world space. */
-  hit(x: number, z: number, r: number): boolean {
+  /** Deepest circle-collider penetration at (x, z) in world space (0 = clear). */
+  hit(x: number, z: number, r: number): number {
+    let pen = 0;
     for (const c of this.chunks) {
       const oz = c.group.position.z;
       for (const k of c.colliders) {
         const dx = x - k.x, dz = z - (k.z + oz);
         const rr = r + k.r;
-        if (dx * dx + dz * dz < rr * rr) return true;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < rr * rr) pen = Math.max(pen, rr - Math.sqrt(d2));
       }
     }
-    return false;
+    return pen;
+  }
+
+  /** Nearest obstacle inside the guide rails (for the collision test hook). */
+  obstacles(): { x: number; z: number; r: number }[] {
+    const out: { x: number; z: number; r: number }[] = [];
+    for (const c of this.chunks) for (const k of c.colliders) if (Math.abs(k.x - roadX(k.z)) < 2.8) out.push({ x: k.x, z: k.z + c.group.position.z, r: k.r });
+    return out;
   }
 }

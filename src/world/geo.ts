@@ -4,14 +4,15 @@ import { roadX } from "./road";
 
 /** Surface pattern ids understood by the uber toon shader. */
 export const M = {
-  plain: 0, foliage: 1, planks: 2, roof: 3, shoji: 4, glow: 5, grass: 6, skin: 7, cloth: 8,
+  plain: 0, foliage: 1, planks: 2, roof: 3, shoji: 4, glass: 5, grass: 6, skin: 7, cloth: 8,
   bark: 9, metal: 10, ground: 11, butterfly: 12, stone: 13, lantern: 14, hair: 15, guard: 16,
+  leafCard: 17, mote: 18, distant: 19, flower: 20,
 } as const;
 
 /** Outline groups: lines are drawn where neighbouring pixels belong to different groups. */
 export const ID = {
   sky: 0, ground: 1, water: 2, berm: 3, grass: 4, rice: 5, tree: 6, house: 7, pole: 8, wire: 9,
-  fence: 10, sign: 11, bike: 12, rider: 13, hair: 14, hills: 15, flower: 16, butterfly: 17, skin: 18,
+  fence: 10, sign: 11, bike: 12, rider: 13, hair: 14, hills: 15, flower: 16, butterfly: 17, skin: 18, eye: 19,
 } as const;
 
 type Geo = THREE.BufferGeometry;

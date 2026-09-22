@@ -4,7 +4,7 @@ export class Input {
   left = false;
   right = false;
 
-  constructor(onFirst: () => void) {
+  constructor(onFirst: () => void, onToggleView: () => void = () => {}) {
     const set = (code: string, v: boolean) => {
       switch (code) {
         case "KeyW":
@@ -28,6 +28,7 @@ export class Input {
     };
     addEventListener("keydown", (e) => {
       onFirst();
+      if (e.code === "KeyV" && !e.repeat) onToggleView();
       if (set(e.code, true)) e.preventDefault();
     });
     addEventListener("keyup", (e) => {

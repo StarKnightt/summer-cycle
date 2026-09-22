@@ -6,11 +6,15 @@ import type { Input } from "../core/input";
 const CRUISE = 6.0;
 const MAX = 10.5;
 const GEAR = 2.3; // wheel revolutions per crank revolution
+/** Opening frame: village + dark tree mass + pole in the right third, paddy mirror on the left. */
+const START_Z = 6;
 
 export class Controller {
-  x = roadX(24) - 0.9;
-  z = 24;
-  yaw = roadYaw(24);
+  x = roadX(START_Z) - 0.9;
+  z = START_Z;
+  yaw = roadYaw(START_Z);
+  /** Set when the last step was refused by an obstacle (for tests / HUD). */
+  bumped = false;
   speed = CRUISE;
   steer = 0;
   lean = 0;
@@ -22,9 +26,9 @@ export class Controller {
   braking = false;
   private coastT = 0;
 
-  constructor(private readonly autoplay: boolean) {}
+  constructor(public autoplay: boolean) {}
 
-  update(dt: number, input: Input, blocked: (x: number, z: number) => boolean): void {
+  update(dt: number, input: Input, blocked: (x: number, z: number) => number): void {
     this.time += dt;
     let throttle = 0;
     let brake = 0;
@@ -65,7 +69,9 @@ export class Controller {
     // Steering → yaw rate via bicycle kinematics; less authority at speed for smoothness.
     const maxSteer = 0.3 / (1 + this.speed * 0.06);
     this.steer = damp(this.steer, steerIn * maxSteer, this.autoplay ? 4 : 6, dt);
-    this.yawRate = (this.speed * Math.tan(this.steer)) / BIKE.WHEELBASE;
+    // At a standstill she can still walk the bars round (so a stop at an obstacle isn't a dead end).
+    const turnSpeed = steerIn !== 0 ? Math.max(this.speed, 1.2) : this.speed;
+    this.yawRate = (turnSpeed * Math.tan(this.steer)) / BIKE.WHEELBASE;
     this.yaw += this.yawRate * dt;
 
     // Integrate, then enforce the invisible guide rails and obstacles.
@@ -78,11 +84,17 @@ export class Controller {
       const ry = roadYaw(nz);
       this.yaw = damp(this.yaw, ry, 6, dt);
     }
-    if (blocked(nx, nz)) {
+    // Obstacles: blocked() returns penetration depth (0 = clear). Refuse steps that go deeper;
+    // steps that back out of contact are allowed so she can ride away after turning.
+    const now = blocked(this.x, this.z);
+    const next = blocked(nx, nz);
+    if (next > 0 && next >= now - 1e-4) {
       this.speed = 0;
+      this.bumped = true;
     } else {
       this.x = nx;
       this.z = nz;
+      this.bumped = false;
     }
 
     this.lean = damp(this.lean, clamp(Math.atan((this.speed * this.yawRate) / 9.81) * 1.4, -0.4, 0.4), 5, dt);

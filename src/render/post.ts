@@ -82,20 +82,23 @@ export class Post {
           float dC = linz(texture2D(tDepth, vUv).r);
           float iC = 1.0 / dC;
           vec4 nC = texture2D(tNormal, vUv);
-          float eD = 0.0, eN = 0.0, eI = 0.0, mask = nC.a;
+          float eD = 0.0, eN = 0.0, eI = 0.0, mask = max(nC.a, 0.0);
           vec2 offs[4];
           offs[0] = vec2(1.0, 0.0); offs[1] = vec2(0.0, 1.0); offs[2] = vec2(0.7071, 0.7071); offs[3] = vec2(0.7071, -0.7071);
           for (int i = 0; i < 4; i++){
             vec2 o = offs[i] * px;
+            vec4 n1 = texture2D(tNormal, vUv + o), n2 = texture2D(tNormal, vUv - o);
+            // Excluded surfaces (mask < 0: grass, leaf cards, motes) never ink or induce ink.
+            if (n1.a < 0.0 || n2.a < 0.0) continue;
             float i1 = 1.0 / linz(texture2D(tDepth, vUv + o).r);
             float i2 = 1.0 / linz(texture2D(tDepth, vUv - o).r);
             // Laplacian of 1/z is zero on planes: only creases and silhouettes light up.
             eD = max(eD, abs(i1 + i2 - 2.0 * iC) / iC);
-            vec4 n1 = texture2D(tNormal, vUv + o), n2 = texture2D(tNormal, vUv - o);
             eN = max(eN, length(n1.xy - nC.xy) + length(n2.xy - nC.xy));
             eI = max(eI, step(0.01, abs(n1.z - nC.z)) + step(0.01, abs(n2.z - nC.z)));
             mask = max(mask, max(n1.a, n2.a));
           }
+          if (nC.a < 0.0) mask = 0.0;
           float e = max(smoothstep(0.05, 0.16, eD), smoothstep(0.55, 1.0, eN));
           e = max(e, min(eI, 1.0));
           float fade = 1.0 - smoothstep(60.0, 420.0, dC) * 0.75;
@@ -130,9 +133,9 @@ export class Post {
         void main(){
           vec3 c = texture2D(tDiffuse, vUv).rgb;
           float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-          c = mix(vec3(l), c, 1.18);
-          // Split tone: cool teal shadows, warm golden highlights.
-          c *= mix(vec3(0.95, 1.0, 1.05), vec3(1.05, 1.0, 0.92), smoothstep(0.05, 0.7, l));
+          c = mix(vec3(l), c, 1.05);
+          // Split tone: cool teal shadows, warm (#fff1d8) highlight lift.
+          c *= mix(vec3(0.96, 1.0, 1.04), vec3(1.0, 0.945, 0.85) * 1.04, smoothstep(0.08, 0.75, l));
           // Soft shoulder.
           c = c / (1.0 + max(c - 0.85, 0.0) * 0.8);
           vec3 s = toSRGB(c);
@@ -155,6 +158,11 @@ export class Post {
     this.composer.addPass(this.fxaa);
   }
 
+  /** Keep depth linearisation in sync with the camera (FPP uses a much smaller near plane). */
+  setNear(n: number): void {
+    this.ink.uniforms.uNear.value = n;
+  }
+
   setSize(w: number, h: number): void {
     const pr = this.renderer.getPixelRatio();
     const W = Math.floor(w * pr), H = Math.floor(h * pr);
@@ -167,12 +175,12 @@ export class Post {
   }
 
   render(scene: THREE.Scene, camera: THREE.Camera, time: number): void {
-    this.renderer.info.reset();
+    const c0 = this.renderer.info.render.calls, t0 = this.renderer.info.render.triangles;
     this.renderer.setRenderTarget(this.mrt);
     this.renderer.clear();
     this.renderer.render(scene, camera);
-    this.sceneCalls = this.renderer.info.render.calls;
-    this.sceneTris = this.renderer.info.render.triangles;
+    this.sceneCalls = this.renderer.info.render.calls - c0;
+    this.sceneTris = this.renderer.info.render.triangles - t0;
     this.renderer.setRenderTarget(null);
     this.grade.uniforms.uTime.value = time;
     this.composer.render();
