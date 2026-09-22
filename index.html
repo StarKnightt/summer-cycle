@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23f2c028'/%3E%3C/svg%3E" />
+    <title>Ghibli Ride — a summer afternoon on two wheels</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #a9d6e6; }
+      canvas { display: block; }
+      #hud {
+        position: fixed; right: 28px; bottom: 22px;
+        font: 500 15px/1 "Georgia", "Times New Roman", serif; letter-spacing: 0.08em;
+        color: rgba(255, 252, 240, 0.78); text-shadow: 0 1px 3px rgba(40, 30, 20, 0.35);
+        pointer-events: none; user-select: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

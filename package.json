@@ -1,0 +1,22 @@
+{
+  "name": "ghibli-ride",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 5420 --strictPort",
+    "typecheck": "tsc --noEmit",
+    "shoot": "node scripts/shoot.mjs"
+  },
+  "dependencies": {
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "playwright": "^1.63.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  }
+}
