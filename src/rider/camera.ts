@@ -61,8 +61,8 @@ export class ChaseCam {
     let hard = this.mode !== "chase";
     switch (this.mode) {
       case "closeup":
-        tp = new THREE.Vector3(c.x + rx * 1.9 + fx * 1.4, 1.05, c.z + rz * 1.9 + fz * 1.4);
-        tl = new THREE.Vector3(c.x + fx * 0.1, 0.8, c.z + fz * 0.1);
+        tp = new THREE.Vector3(c.x + rx * 2.1 + fx * 1.5, 1.2, c.z + rz * 2.1 + fz * 1.5);
+        tl = new THREE.Vector3(c.x + fx * 0.05, 0.95, c.z + fz * 0.05);
         break;
       case "side":
         tp = new THREE.Vector3(c.x - rx * 3.0 + fx * 0.6, 1.25, c.z - rz * 3.0 + fz * 0.6);
@@ -84,8 +84,8 @@ export class ChaseCam {
       default:
         hard = false;
         // Low chase: 1.5 m high, 4.2 m back, aimed 0.6 m right so she sits on the left third.
-        tp = new THREE.Vector3(c.x + bx * 4.2 + cxr * (sway + 0.15), 1.5 + bob, c.z + bz * 4.2 + czr * (sway + 0.15));
-        tl = new THREE.Vector3(c.x + fx * 7 + cxr * 0.6 * 1.6, 1.25, c.z + fz * 7 + czr * 0.6 * 1.6);
+        tp = new THREE.Vector3(c.x + bx * 4.2 + cxr * (sway + 0.35), 1.5 + bob, c.z + bz * 4.2 + czr * (sway + 0.35));
+        tl = new THREE.Vector3(c.x + fx * 7 + cxr * 1.45, 1.25, c.z + fz * 7 + czr * 1.45);
     }
     if (!this.init || hard) {
       this.pos.copy(tp);

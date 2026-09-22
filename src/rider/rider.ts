@@ -411,7 +411,7 @@ export class Rider {
     const sp = shell.attributes.position;
     for (let i = 0; i < sp.count; i++) {
       const z = sp.getZ(i), y = sp.getY(i);
-      if (z < -0.04 && y < 0.07) sp.setZ(i, z * 0.35 + 0.02);
+      if (z < -0.01 && y < 0.06) sp.setZ(i, z * 0.3 + 0.025);
     }
     shell.computeVertexNormals();
     shell.translate(0, 0.022, 0.012);

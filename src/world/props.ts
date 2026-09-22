@@ -363,13 +363,13 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
         spherize(g, center, 0.7, 1.2);
         out.push(g);
       }
-      for (let i = 0; i < 150; i++) {
+      for (let i = 0; i < 230; i++) {
         const dir = randDir(r);
         const rad = cr * range(r, 0.98, 1.16);
         const c = center.clone().add(V(dir.x * rad, dir.y * rad * sy, dir.z * rad));
         const nrm = dir.clone().normalize();
         const facing = dir.clone().add(V(range(r, -0.5, 0.5), range(r, -0.3, 0.5), range(r, -0.5, 0.5))).normalize();
-        out.push(leafCard(c, facing, cr * range(r, 0.26, 0.4), LEAF[Math.floor(r() * LEAF.length)], nrm, r() * 6.28));
+        out.push(leafCard(c, facing, cr * range(r, 0.18, 0.28), LEAF[Math.floor(r() * LEAF.length)], nrm, r() * 6.28));
       }
     }
   } else if (kind === "bush") {

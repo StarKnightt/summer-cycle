@@ -463,9 +463,9 @@ export function buildChunk(k: number): Chunk {
     const n = Math.round(len / 2);
     for (let i = 0; i <= n; i++) {
       const z = a - (i / n) * len;
-      infraG.push(xf(prep(new THREE.CylinderGeometry(0.06, 0.06, 0.85, 8), "#c4c2ba", M.metal), roadX(z) + 3.25, 0.42, z));
+      infraG.push(xf(prep(new THREE.CylinderGeometry(0.06, 0.06, 0.85, 8), "#a2a098", M.metal), roadX(z) + 3.25, 0.42, z));
     }
-    const rail = prep(new THREE.BoxGeometry(0.06, 0.32, len, 1, 2, Math.max(1, Math.round(len / 2))), "#cbc9c0", M.metal);
+    const rail = prep(new THREE.BoxGeometry(0.06, 0.32, len, 1, 2, Math.max(1, Math.round(len / 2))), "#a8a69e", M.metal);
     rail.translate(3.18, 0.66, a - len / 2);
     infraG.push(shear(rail));
   }
