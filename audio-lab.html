@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ghibli-ride · audio lab</title>
+    <style>
+      body { font: 14px system-ui, sans-serif; background: #f4ecd8; color: #3a2e22; padding: 16px; }
+      button, select { margin: 2px; padding: 4px 8px; }
+      pre { background: #fffaf0; padding: 8px; min-height: 3em; }
+    </style>
+  </head>
+  <body>
+    <h3>ghibli-ride audio lab</h3>
+    <p>
+      <button id="start">start</button>
+      <label><input type="checkbox" id="auto" checked /> simulated ride</label>
+      speed <input type="range" id="speed" min="0" max="10.5" step="0.1" value="6" />
+      <label><input type="checkbox" id="brake" /> brake</label>
+      <label><input type="checkbox" id="coast" /> coast</label>
+      solo <select id="solo"><option value="">all</option></select>
+    </p>
+    <p id="events"></p>
+    <pre id="meter"></pre>
+    <script type="module" src="/audio-lab.ts"></script>
+  </body>
+</html>

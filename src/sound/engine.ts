@@ -43,7 +43,9 @@ export class SoundEngine {
   private readonly water: WaterLayer;
   private readonly amb: AmbienceLayer;
   private readonly volume: GainNode;
-  private readonly mutes: Record<LayerName, [GainNode, GainNode]>;
+  private readonly mix: GainNode;
+  private readonly verbIn: AudioNode;
+  private readonly routed = new Set<LayerName>();
   private readonly lazy: boolean;
   private lastParams = -1;
   private dist = 0;
@@ -71,7 +73,13 @@ export class SoundEngine {
     const kit = (this.kit = new Kit(ctx, opts.seed ?? (Math.random() * 2 ** 31) | 0));
 
     // ── master: mix → warm EQ → glue compressor → volume → limiter → soft clip ──
-    const mix = ctx.createGain();
+    // DynamicsCompressorNode applies spec-defined automatic makeup gain (≈ +7 dB glue, +2 dB limiter at these
+    // settings); the layer level constants are tuned with that included.
+    const mix = (this.mix = ctx.createGain());
+    const sub = ctx.createBiquadFilter();
+    sub.type = "highpass";
+    sub.frequency.value = 35;
+    sub.Q.value = 0.6;
     const low = ctx.createBiquadFilter();
     low.type = "lowshelf";
     low.frequency.value = 180;
@@ -96,7 +104,7 @@ export class SoundEngine {
     limiter.release.value = 0.1;
     const clip = ctx.createWaveShaper();
     clip.curve = softClipCurve();
-    mix.connect(low).connect(high).connect(glue).connect(this.volume).connect(limiter).connect(clip).connect(dest);
+    mix.connect(sub).connect(low).connect(high).connect(glue).connect(this.volume).connect(limiter).connect(clip).connect(dest);
     this.output = clip;
 
     // ── open-air reverb ──
@@ -105,10 +113,11 @@ export class SoundEngine {
     verbIn.frequency.value = 220;
     const conv = ctx.createConvolver();
     conv.normalize = false;
-    conv.buffer = kit.buffer(reverbIR(ctx.sampleRate, kit.rng), ctx.sampleRate);
+    kit.defer("reverb", () => (conv.buffer = kit.buffer(reverbIR(ctx.sampleRate, kit.rng, 2.2, 1.9), ctx.sampleRate)));
     const verbOut = ctx.createGain();
     verbOut.gain.value = 0.9;
     verbIn.connect(conv).connect(verbOut).connect(mix);
+    this.verbIn = verbIn;
 
     this.bike = new BikeLayer(kit);
     this.cicadas = new CicadaLayer(kit);
@@ -116,15 +125,7 @@ export class SoundEngine {
     this.water = new WaterLayer(kit);
     this.amb = new AmbienceLayer(kit);
     this.layers = { bike: this.bike, wind: new WindLayer(kit), cicadas: this.cicadas, birds: this.birds, water: this.water, ambience: this.amb };
-    this.mutes = {} as Record<LayerName, [GainNode, GainNode]>;
-    for (const n of LAYER_NAMES) {
-      const l = this.layers[n];
-      const dry = ctx.createGain();
-      const wet = ctx.createGain();
-      l.out.connect(dry).connect(mix);
-      l.wet.connect(wet).connect(verbIn);
-      this.mutes[n] = [dry, wet];
-    }
+    this.solo(null);
     if (!this.lazy) kit.pump(Infinity);
   }
 
@@ -169,9 +170,18 @@ export class SoundEngine {
   /** Hear only one layer (null = everything). */
   solo(name: LayerName | null): void {
     for (const n of LAYER_NAMES) {
-      const on = name === null || n === name ? 1 : 0;
-      this.mutes[n][0].gain.value = on;
-      this.mutes[n][1].gain.value = on;
+      const l = this.layers[n];
+      const on = name === null || n === name;
+      if (on === this.routed.has(n)) continue;
+      if (on) {
+        l.out.connect(this.mix);
+        l.wet.connect(this.verbIn);
+        this.routed.add(n);
+      } else {
+        l.out.disconnect(this.mix);
+        l.wet.disconnect(this.verbIn);
+        this.routed.delete(n);
+      }
     }
   }
 

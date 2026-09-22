@@ -1,5 +1,5 @@
-import { clamp, expRand, rr, vnoise } from "./dsp";
-import { GEN_SR, glide, Kit, Layer, type Env, type RideState } from "./kit";
+import { clamp, expRand, rr, smoothstep, vnoise } from "./dsp";
+import { Gate, GEN_SR, glide, glideStep, Kit, Layer, type Env, type RideState } from "./kit";
 import { crossingDing, furin, railClack, rustle, templeBell } from "./voices";
 
 const L_WIND = 0.5;
@@ -16,9 +16,9 @@ export class WindLayer extends Layer {
   private gR: GainNode;
   private bpL: BiquadFilterNode;
   private bpR: BiquadFilterNode;
-  private buffet: GainNode;
+  private buffet: Gate;
   private grass: GainNode;
-  private rustleG: GainNode;
+  private rustle: Gate;
   private rustleSrc: AudioBufferSourceNode | null = null;
 
   constructor(kit: Kit) {
@@ -36,23 +36,24 @@ export class WindLayer extends Layer {
     split.connect(this.bpR, 1).connect(this.gR).connect(merge, 0, 1);
     merge.connect(this.out);
 
-    this.buffet = this.gain();
-    kit.loop(kit.brown).connect(this.filter("lowpass", 160, 0.7)).connect(this.buffet).connect(this.out);
+    this.buffet = new Gate(this.gain(), this.out);
+    kit.loop(kit.brown).connect(this.filter("lowpass", 160, 0.7)).connect(this.buffet.g);
 
     this.grass = this.gain();
     kit.loop(kit.pinkSt, 0.93).connect(this.filter("bandpass", 2600, 0.6)).connect(this.grass).connect(this.out);
 
-    this.rustleG = this.gain();
-    this.rustleG.connect(this.out);
+    const rustleBus = this.gain(1);
+    rustleBus.connect(this.out);
+    this.rustle = new Gate(this.gain(), rustleBus);
     this.wet.gain.value = 0.08;
     this.grass.connect(this.wet);
-    this.rustleG.connect(this.wet);
+    rustleBus.connect(this.wet);
   }
 
   events(): void {
     if (!this.rustleSrc && this.kit.has("rustle")) {
       this.rustleSrc = this.kit.loop(this.kit.get("rustle")[0]);
-      this.rustleSrc.connect(this.rustleG);
+      this.rustleSrc.connect(this.rustle.g);
     }
   }
 
@@ -64,21 +65,21 @@ export class WindLayer extends Layer {
     const base = L_WIND * (0.28 * air + flow);
     glide(this.gL.gain, base * (1 - dir * 0.5), now, 0.15);
     glide(this.gR.gain, base * (1 + dir * 0.5), now, 0.15);
-    glide(this.bpL.frequency, 260 + 420 * air + 1100 * flow + 160 * (vnoise(now / 3.1, 7) - 0.5), now, 0.2);
-    glide(this.bpR.frequency, 280 + 420 * air + 1100 * flow + 160 * (vnoise(now / 2.7, 8) - 0.5), now, 0.2);
-    glide(this.buffet.gain, L_BUFFET * Math.pow(flow, 1.2) * (0.5 + e.turb), now, 0.06);
+    glideStep(this.bpL.frequency, 260 + 420 * air + 1100 * flow + 160 * (vnoise(now / 3.1, 7) - 0.5), now, 0.2);
+    glideStep(this.bpR.frequency, 280 + 420 * air + 1100 * flow + 160 * (vnoise(now / 2.7, 8) - 0.5), now, 0.2);
+    this.buffet.set(L_BUFFET * Math.pow(flow, 1.2) * (0.5 + e.turb) * smoothstep(0.25, 0.4, sp), now, 0.06);
     glide(this.grass.gain, L_GRASS * (0.25 + 0.75 * e.gust) * (1 - 0.4 * s.trees) * (0.7 + 0.3 * sp), now, 0.3);
-    glide(this.rustleG.gain, L_RUSTLE * s.trees * (0.18 + 0.82 * Math.pow(e.gust, 1.3)) * (0.85 + 0.3 * sp), now, 0.35);
+    this.rustle.set(L_RUSTLE * s.trees * (0.18 + 0.82 * Math.pow(e.gust, 1.3)) * (0.85 + 0.3 * sp), now, 0.35);
     if (this.rustleSrc) glide(this.rustleSrc.playbackRate, 0.96 + 0.08 * vnoise(now / 11, 9), now, 0.5);
   }
 }
 
-const L_BED = 0.1;
-const L_VALLEY = 0.07;
-const L_FURIN = 0.1;
-const L_TEMPLE = 0.22;
+const L_BED = 0.05;
+const L_VALLEY = 0.04;
+const L_FURIN = 0.12;
+const L_TEMPLE = 0.1;
 const L_CROSS = 0.06;
-const L_TRAIN = 0.16;
+const L_TRAIN = 0.05;
 
 /**
  * Ambience: warm low countryside air, and rare nostalgic details — a glass furin tinkling on a porch
@@ -101,7 +102,7 @@ export class AmbienceLayer extends Layer {
     kit.bank("clack", 3, GEN_SR, railClack);
 
     this.bed = this.gain();
-    kit.loop(kit.brown).connect(this.filter("lowpass", 240, 0.6)).connect(this.bed).connect(this.out);
+    kit.loop(kit.brown).connect(this.filter("highpass", 55, 0.7)).connect(this.filter("lowpass", 260, 0.6)).connect(this.bed).connect(this.out);
     this.valley = this.gain();
     kit.loop(kit.pinkSt, 0.9).connect(this.filter("bandpass", 150, 0.8)).connect(this.valley).connect(this.out);
     this.far = this.filter("lowpass", 1800, 0.6);

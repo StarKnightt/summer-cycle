@@ -1,5 +1,5 @@
 import { clamp, expRand, lerp, pick, rr, vnoise } from "./dsp";
-import { GEN_SR, glide, Kit, Layer, type Env, type RideState } from "./kit";
+import { Gate, GEN_SR, glide, glideStep, Kit, Layer, type RideState } from "./kit";
 import { birdChirps, birdTrill, birdWarble, birdWhistle, cicadaChorus, crow, frog, higurashi, kite, minmin, uguisu, waterBabble } from "./voices";
 
 /** Place a voice at distance d∈[0,1]: quieter, darker (far bus) and wetter the further away. */
@@ -7,9 +7,9 @@ function placeOpts(l: Layer & { far: AudioNode }, d: number, gain: number) {
   return { gain: gain * lerp(1, 0.3, d), dest: d > 0.5 ? l.far : l.out, wet: lerp(0.15, 0.7, d), wetDest: l.wet };
 }
 
-const L_CHORUS = 0.1;
-const L_HIGU = 0.09;
-const L_MINMIN = 0.06;
+const L_CHORUS = 0.04;
+const L_HIGU = 0.055;
+const L_MINMIN = 0.04;
 
 /**
  * Cicadas: a seamlessly looping far chorus in two stereo-spread sheets that swell and fade in slow waves,
@@ -106,7 +106,7 @@ export class CicadaLayer extends Layer {
   }
 }
 
-const L_BIRD = 0.22;
+const L_BIRD = 0.1;
 type Kind = "chirp" | "warble" | "trill" | "whistle";
 const KINDS: Kind[] = ["chirp", "chirp", "warble", "warble", "trill", "trill", "whistle"];
 
@@ -153,7 +153,7 @@ export class BirdLayer extends Layer {
     return {
       kind,
       pan: rr(r, -0.9, 0.9),
-      d: kind === "whistle" ? rr(r, 0.5, 1) : rr(r, 0.1, 1),
+      d: kind === "whistle" ? rr(r, 0.5, 1) : rr(r, 0.2, 1),
       rate: rr(r, 0.92, 1.08),
       next: now + (first ? rr(r, 0.8, 6) : rr(r, 3, 10)),
       left: 2 + Math.floor(r() * 5),
@@ -195,7 +195,7 @@ export class BirdLayer extends Layer {
       const b = k.pick("uguisu");
       if (b) {
         const pan = this.uguisuLeft > 0 ? 0.55 : rr(r, -0.8, 0.8);
-        k.play(b, now + 0.02, { ...placeOpts(this, rr(r, 0.35, 0.6), L_BIRD * 0.85), pan, rate: rr(r, 0.98, 1.02) });
+        k.play(b, now + 0.02, { ...placeOpts(this, rr(r, 0.35, 0.6), L_BIRD * 0.8), pan, rate: rr(r, 0.98, 1.02) });
         if (this.uguisuLeft > 0) this.uguisuLeft--;
         else this.uguisuLeft = Math.floor(r() * 3);
         this.nextUguisu = now + (this.uguisuLeft > 0 ? rr(r, 7, 12) : rr(r, 45, 110));
@@ -205,14 +205,14 @@ export class BirdLayer extends Layer {
       const b = k.pick("kite");
       if (b) {
         const pan = rr(r, -0.7, 0.7);
-        k.play(b, now + 0.02, { ...placeOpts(this, rr(r, 0.85, 1), L_BIRD * 1.1), pan, panTo: pan + rr(r, -0.3, 0.3), rate: rr(r, 0.97, 1.03) });
+        k.play(b, now + 0.02, { ...placeOpts(this, rr(r, 0.75, 0.95), L_BIRD * 1.05), pan, panTo: pan + rr(r, -0.3, 0.3), rate: rr(r, 0.97, 1.03) });
         this.nextKite = now + rr(r, 70, 160);
       } else this.nextKite = now + 2;
     }
     if (now >= this.nextCrow) {
       const b = k.pick("crow");
       if (b) {
-        k.play(b, now + 0.02, { ...placeOpts(this, rr(r, 0.75, 1), L_BIRD * 0.8), pan: rr(r, -0.9, 0.9), rate: rr(r, 0.95, 1.05) });
+        k.play(b, now + 0.02, { ...placeOpts(this, rr(r, 0.7, 0.95), L_BIRD * 0.8), pan: rr(r, -0.9, 0.9), rate: rr(r, 0.95, 1.05) });
         this.nextCrow = now + rr(r, 50, 130);
       } else this.nextCrow = now + 2;
     }
@@ -228,12 +228,12 @@ export class BirdLayer extends Layer {
 }
 
 const L_WATER = 0.22;
-const L_FROG = 0.12;
+const L_FROG = 0.3;
 
 /** Water: trickling irrigation channel beside the paddies (fades with proximity) and far-off tree frogs. */
 export class WaterLayer extends Layer {
   readonly far: BiquadFilterNode;
-  private g: GainNode;
+  private g: Gate;
   private lp: BiquadFilterNode;
   private pan: StereoPannerNode;
   private src: AudioBufferSourceNode | null = null;
@@ -243,10 +243,10 @@ export class WaterLayer extends Layer {
     super(kit);
     kit.loopBank("water", 2, GEN_SR, waterBabble(10));
     kit.bank("frog", 3, GEN_SR, frog);
-    this.g = this.gain();
     this.lp = this.filter("lowpass", 3000, 0.6);
     this.pan = this.ctx.createStereoPanner();
-    this.g.connect(this.lp).connect(this.pan).connect(this.out);
+    this.g = new Gate(this.gain(), this.lp);
+    this.lp.connect(this.pan).connect(this.out);
     this.pan.connect(this.gain(0.3)).connect(this.wet);
     this.far = this.filter("lowpass", 2400, 0.6);
     this.far.connect(this.out);
@@ -256,7 +256,7 @@ export class WaterLayer extends Layer {
     const k = this.kit;
     if (!this.src && k.has("water")) {
       this.src = k.loop(k.get("water")[0]);
-      this.src.connect(this.g);
+      this.src.connect(this.g.g);
     }
     if (!this.nextFrog) this.nextFrog = now + rr(k.rng, 8, 20);
     if (now >= this.nextFrog) {
@@ -273,8 +273,8 @@ export class WaterLayer extends Layer {
 
   params(now: number, s: RideState): void {
     const w = s.water;
-    glide(this.g.gain, L_WATER * Math.pow(w, 1.4), now, 0.6);
-    glide(this.lp.frequency, 900 + 4500 * w, now, 0.6);
+    this.g.set(L_WATER * Math.pow(w, 1.4), now, 0.6);
+    glideStep(this.lp.frequency, 900 + 4500 * w, now, 0.6);
     glide(this.pan.pan, clamp((vnoise(now / 23, 61) - 0.5) * 1.6, -0.8, 0.8), now, 1);
     if (this.src) glide(this.src.playbackRate, 0.95 + 0.1 * vnoise(now / 9, 62), now, 0.8);
   }

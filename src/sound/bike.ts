@@ -1,16 +1,16 @@
 import { clamp, expRand, rr, smoothstep, vnoise } from "./dsp";
-import { GEN_SR, glide, Kit, Layer, type Env, type RideState } from "./kit";
+import { Gate, GEN_SR, glide, glideStep, Kit, Layer, type RideState } from "./kit";
 import { bikeBell, chainTick, freewheelClick, rattle } from "./voices";
 
 const L_TYRE = 0.34;
 const L_HISS = 0.07;
 const L_WHIRR = 0.05;
-const L_CHAIN = 0.2;
-const L_FREE = 0.12;
+const L_CHAIN = 0.13;
+const L_FREE = 0.1;
 const L_RUB = 0.14;
 const L_SQUEAL = 0.012;
-const L_RATTLE = 0.3;
-const L_BELL = 0.3;
+const L_RATTLE = 0.24;
+const L_BELL = 0.2;
 
 const TEETH = 33; // chainring teeth → chain mesh rate
 const PAWL_CLICKS = 16; // freewheel clicks per wheel revolution
@@ -27,16 +27,16 @@ interface Clicker {
  * coasting, rim-brake rub with an occasional soft squeal, basket rattle on bumps, and the thumb bell.
  */
 export class BikeLayer extends Layer {
-  private tyreG: GainNode;
+  private tyre: Gate;
   private tyreLP: BiquadFilterNode;
-  private hissG: GainNode;
+  private hiss: Gate;
   private hissBP: BiquadFilterNode;
   private tread: OscillatorNode;
-  private whirrG: GainNode;
+  private whirr: Gate;
   private mesh: OscillatorNode;
-  private rubG: GainNode;
+  private rub: Gate;
   private rubBP: BiquadFilterNode;
-  private sqG: GainNode;
+  private squeal: Gate;
   private sq: OscillatorNode;
   private freeBus: GainNode;
   private chainBus: GainNode;
@@ -57,9 +57,9 @@ export class BikeLayer extends Layer {
     kit.bank("fw", 8, sr, freewheelClick, true);
     kit.bank("chain", 6, sr, chainTick(false), true);
     kit.bank("chainAcc", 3, sr, chainTick(true), true);
-    kit.bank("rattle", 5, GEN_SR, rattle, true);
-    kit.bank("bell", 2, GEN_SR, bikeBell(false), true);
-    kit.bank("tink", 2, GEN_SR, bikeBell(true), true);
+    kit.bank("rattle", 5, GEN_SR, rattle);
+    kit.bank("bell", 2, GEN_SR, bikeBell(false));
+    kit.bank("tink", 2, GEN_SR, bikeBell(true));
 
     // Tyre: pink noise, amplitude-modulated once per wheel revolution (tread/valve), low-passed with speed.
     this.tread = this.osc(1);
@@ -68,13 +68,15 @@ export class BikeLayer extends Layer {
     const treadAM = this.gain(1);
     treadDepth.connect(treadAM.gain);
     this.tyreLP = this.filter("lowpass", 300, 0.6);
-    this.tyreG = this.gain();
-    kit.loop(kit.pink).connect(treadAM).connect(this.tyreLP).connect(this.tyreG).connect(this.out);
+    const pinkSrc = kit.loop(kit.pink);
+    const whiteSrc = kit.loop(kit.white);
+    this.tyre = new Gate(this.gain(), this.out);
+    pinkSrc.connect(treadAM).connect(this.filter("highpass", 90, 0.7)).connect(this.tyreLP).connect(this.tyre.g);
 
     // Fine asphalt hiss.
     this.hissBP = this.filter("bandpass", 3000, 0.7);
-    this.hissG = this.gain();
-    kit.loop(kit.white).connect(this.hissBP).connect(this.hissG).connect(this.out);
+    this.hiss = new Gate(this.gain(), this.out);
+    whiteSrc.connect(this.hissBP).connect(this.hiss.g);
 
     // Chain whirr: noise gated at the tooth-mesh rate.
     this.mesh = this.osc(30);
@@ -82,23 +84,23 @@ export class BikeLayer extends Layer {
     this.mesh.connect(meshDepth);
     const meshAM = this.gain(0.6);
     meshDepth.connect(meshAM.gain);
-    this.whirrG = this.gain();
-    kit.loop(kit.white).connect(this.filter("bandpass", 1900, 1.4)).connect(meshAM).connect(this.whirrG).connect(this.out);
+    this.whirr = new Gate(this.gain(), this.out);
+    whiteSrc.connect(this.filter("bandpass", 1900, 1.4)).connect(meshAM).connect(this.whirr.g);
 
     // Rim-brake rub, textured by the same wheel-rate modulation.
     this.rubBP = this.filter("bandpass", 2000, 1.1);
     const rubAM = this.gain(1);
     treadDepth.connect(rubAM.gain);
-    this.rubG = this.gain();
-    kit.loop(kit.pink).connect(this.rubBP).connect(rubAM).connect(this.rubG).connect(this.out);
+    this.rub = new Gate(this.gain(), this.out);
+    pinkSrc.connect(this.rubBP).connect(rubAM).connect(this.rub.g);
 
     // Soft squeal: sine + slow vibrato, rounded by a lowpass.
     this.sq = this.osc(2000);
     const vib = this.osc(5.3);
     const vibD = this.gain(9);
     vib.connect(vibD).connect(this.sq.frequency);
-    this.sqG = this.gain();
-    this.sq.connect(this.sqG).connect(this.filter("lowpass", 3500, 0.5)).connect(this.out);
+    this.squeal = new Gate(this.gain(), this.out);
+    this.sq.connect(this.filter("lowpass", 3500, 0.5)).connect(this.squeal.g);
 
     this.freeBus = this.gain();
     this.freeBus.connect(this.filter("highpass", 1500, 0.6)).connect(this.out);
@@ -141,23 +143,23 @@ export class BikeLayer extends Layer {
   params(now: number, s: RideState): void {
     const sp = clamp(s.speed / 10, 0, 1.2);
     const grain = 0.85 + 0.3 * vnoise(this.dist / 7, 3);
-    glide(this.tyreG.gain, L_TYRE * Math.pow(sp, 1.2) * grain * (1 + 0.4 * s.roughness), now, 0.08);
-    glide(this.tyreLP.frequency, 220 + 900 * sp, now, 0.1);
-    glide(this.hissG.gain, L_HISS * Math.pow(sp, 1.6) * grain, now, 0.08);
-    glide(this.hissBP.frequency, 2500 + 2200 * sp, now, 0.1);
-    glide(this.tread.frequency, Math.max(0.05, s.wheel), now, 0.05);
+    this.tyre.set(L_TYRE * Math.pow(sp, 1.2) * grain * (1 + 0.4 * s.roughness), now, 0.08);
+    glideStep(this.tyreLP.frequency, 220 + 900 * sp, now, 0.1);
+    this.hiss.set(L_HISS * Math.pow(sp, 1.6) * grain, now, 0.08);
+    glideStep(this.hissBP.frequency, 2500 + 2200 * sp, now, 0.1);
+    glideStep(this.tread.frequency, Math.max(0.05, s.wheel), now, 0.05);
 
     const crank = clamp(s.crank / 1.2, 0, 1.5);
-    glide(this.whirrG.gain, L_WHIRR * s.pedal * crank, now, 0.08);
-    glide(this.mesh.frequency, Math.max(1, s.crank * TEETH), now, 0.05);
+    this.whirr.set(L_WHIRR * s.pedal * crank, now, 0.08);
+    glideStep(this.mesh.frequency, Math.max(1, s.crank * TEETH), now, 0.05);
     glide(this.chainBus.gain, L_CHAIN * s.pedal * clamp(s.crank / 0.5, 0, 1), now, 0.05);
     const coast = 1 - s.pedal;
     glide(this.freeBus.gain, L_FREE * coast * coast * smoothstep(0.2, 1.5, s.speed) * (1 - 0.7 * s.brake), now, 0.05);
 
     const moving = smoothstep(0.2, 3, s.speed);
-    glide(this.rubG.gain, L_RUB * s.brake * moving * (0.6 + 0.4 * sp), now, s.brake > 0 ? 0.05 : 0.03);
-    glide(this.rubBP.frequency, 1300 + 1500 * sp, now, 0.1);
-    glide(this.sqG.gain, L_SQUEAL * this.squealAmt * s.brake * smoothstep(1, 3.5, s.speed), now, s.brake > 0.3 ? 0.15 : 0.04);
+    this.rub.set(L_RUB * s.brake * moving * (0.6 + 0.4 * sp), now, s.brake > 0 ? 0.05 : 0.03);
+    glideStep(this.rubBP.frequency, 1300 + 1500 * sp, now, 0.1);
+    this.squeal.set(L_SQUEAL * this.squealAmt * s.brake * smoothstep(1, 3.5, s.speed), now, s.brake > 0.3 ? 0.15 : 0.04);
     glide(this.sq.frequency, this.squealF * (0.9 + 0.1 * sp), now, 0.2);
   }
 

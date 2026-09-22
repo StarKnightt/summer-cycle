@@ -253,14 +253,17 @@ export const higurashi: Gen = (r, sr) => {
   let sp = 0;
   let ph = 0;
   let tp = 0;
+  let rate = r0;
   for (let i = 0; i < n; i++) {
     const t = i / sr;
     const x = t / D;
-    sp += lerp(r0, r1, Math.pow(x, 0.8)) / sr;
+    if ((i & 63) === 0) rate = lerp(r0, r1, Math.pow(x, 0.8));
+    sp += rate / sr;
     const k = Math.floor(sp);
     const w = sp - k;
-    const e = w < 0.08 ? w / 0.08 : Math.pow(Math.max(0, 1 - (w - 0.08) / 0.75), 1.4);
-    const f = lerp(fS, fE, x) * (1 + 0.045 * Math.sin(Math.PI * w)) * (k & 1 ? 0.962 : 1);
+    const q = Math.max(0, 1 - (w - 0.08) / 0.75);
+    const e = w < 0.08 ? w / 0.08 : q * Math.sqrt(q);
+    const f = lerp(fS, fE, x) * (1 + 0.045 * sn(w * 0.5)) * (k & 1 ? 0.962 : 1);
     ph += f / sr;
     if (ph >= 1) ph -= 1;
     tp += tym / sr;
@@ -328,14 +331,22 @@ export const cicadaChorus =
       const m = 1 + Math.floor(r() * 3);
       const sp = r();
       const amp = rr(r, 0.4, 1);
-      const pw = rr(r, 2, 4);
+      const sharp = r() < 0.5;
       const fmK = (fc * fmA) / (TAU * jr);
-      for (let i = 0; i < n; i++) {
-        const t = i / sr;
-        const env = amp * Math.pow(0.3 + 0.7 * (0.5 - 0.5 * sn((m * t) / L + sp + 0.25)), 1.5);
-        const pulse = Math.pow(0.5 + 0.5 * sn(pr * t), pw);
-        const ph = fc * t - fmK * sn(jr * t + jp + 0.25);
-        d[i] += env * pulse * (sn(ph) + 0.35 * noise[i]);
+      const B = 64;
+      for (let i0 = 0; i0 < n; i0 += B) {
+        const tb = i0 / sr;
+        const s = 0.3 + 0.7 * (0.5 - 0.5 * sn((m * tb) / L + sp + 0.25));
+        const env = amp * s * Math.sqrt(s);
+        const e = Math.min(n, i0 + B);
+        for (let i = i0; i < e; i++) {
+          const t = i / sr;
+          const p = 0.5 + 0.5 * sn(pr * t);
+          const p2 = p * p;
+          const pulse = sharp ? p2 * p2 : p2 * p;
+          const ph = fc * t - fmK * sn(jr * t + jp + 0.25);
+          d[i] += env * pulse * (sn(ph) + 0.35 * noise[i]);
+        }
       }
     }
     filt(d, new Biq("bp", sr, 4800, 0.8), true);
@@ -371,14 +382,21 @@ export const frog: Gen = (r, sr) => {
 
 // ───────────────────────────── air & water loops ─────────────────────────────
 
-/** Periodic cluster density in [0,1] built from whole-cycle cosines. */
+/** Periodic cluster density in [0,1] built from whole-cycle cosines (tabulated at 200 Hz). */
 function cluster(r: Rng, L: number): (t: number) => number {
   const parts = Array.from({ length: 4 }, () => ({ m: 2 + Math.floor(r() * 8), p: r(), a: rr(r, 0.5, 1) }));
   const sum = parts.reduce((s, p) => s + p.a, 0);
-  return (t) => {
+  const N = Math.round(L * 200);
+  const tab = new Float32Array(N + 1);
+  for (let i = 0; i <= N; i++) {
     let v = 0;
-    for (const p of parts) v += p.a * (0.5 + 0.5 * sn((p.m * t) / L + p.p));
-    return Math.pow(v / sum, 2.2);
+    for (const p of parts) v += p.a * (0.5 + 0.5 * sn((p.m * i) / N + p.p));
+    tab[i] = Math.pow(v / sum, 2.2);
+  }
+  return (t) => {
+    const x = ((((t / L) % 1) + 1) % 1) * N;
+    const i = x | 0;
+    return tab[i] + (tab[i + 1] - tab[i]) * (x - i);
   };
 }
 
@@ -397,7 +415,12 @@ export const rustle =
       const tau = len / 3;
       const a = Math.pow(r(), 2);
       const i0 = Math.floor(pos * sr);
-      for (let i = 0; i < len; i++) d[(i0 + i) % n] += a * (r() * 2 - 1) * Math.exp(-i / tau) * Math.min(1, i / 20);
+      const k = Math.exp(-1 / tau);
+      let e = a;
+      for (let i = 0; i < len; i++) {
+        d[(i0 + i) % n] += e * (r() * 2 - 1) * (i < 20 ? i / 20 : 1);
+        e *= k;
+      }
     }
     for (let i = 0; i < n; i++) d[i] += 0.1 * (r() * 2 - 1) * c(i / sr);
     filt(d, new Biq("hp", sr, 1500, 0.7), true);
@@ -421,10 +444,13 @@ export const waterBabble =
       const len = Math.floor(Math.min(0.15, 5 / dec) * sr);
       const i0 = Math.floor(pos * sr);
       let ph = r();
+      let e = a;
+      const k = Math.exp(-dec / sr);
+      const at = 0.0005 * sr;
       for (let i = 0; i < len; i++) {
-        const t = i / sr;
-        ph += (f0 * (1 + xi * dec * t)) / sr;
-        d[(i0 + i) % n] += a * Math.exp(-dec * t) * Math.min(1, i / (0.0005 * sr)) * sn(ph);
+        ph += (f0 * (1 + (xi * dec * i) / sr)) / sr;
+        d[(i0 + i) % n] += e * (i < at ? i / at : 1) * sn(ph);
+        e *= k;
       }
     };
     const nb = Math.floor(24 * L);

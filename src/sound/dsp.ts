@@ -255,12 +255,17 @@ export function reverbIR(sr: number, r: Rng, dur = 3.2, t60 = 2.4): Float32Array
       if (i < n) d[i] += rr(r, 0.05, 0.22) * Math.exp(-t * 14) * (r() < 0.5 ? -1 : 1);
     }
     let lp = 0;
-    for (let i = pre; i < n; i++) {
-      const t = (i - pre) / sr;
+    const B = 64;
+    for (let i0 = pre; i0 < n; i0 += B) {
+      // envelope and damping change slowly: evaluate once per block
+      const t = (i0 - pre) / sr;
       const env = Math.exp((-6.9 * t) / t60) * (1 - Math.exp(-t / 0.045));
-      const fc = 6500 * Math.exp(-t * 1.3) + 700;
-      lp += (1 - Math.exp((-TAU * fc) / sr)) * ((r() * 2 - 1) * env - lp);
-      d[i] += lp;
+      const a = 1 - Math.exp((-TAU * (6500 * Math.exp(-t * 1.3) + 700)) / sr);
+      const e = Math.min(n, i0 + B);
+      for (let i = i0; i < e; i++) {
+        lp += a * ((r() * 2 - 1) * env - lp);
+        d[i] += lp;
+      }
     }
     const fo = Math.floor(sr * 0.2);
     for (let i = 0; i < fo; i++) d[n - 1 - i] *= i / fo;
