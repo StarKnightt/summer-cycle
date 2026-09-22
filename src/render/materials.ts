@@ -32,6 +32,8 @@ export const G = {
   uShadowRange: { value: 300 },
   uShadowCenter: { value: new THREE.Vector3() },
   uShadowHalf: { value: 55 },
+  /** Set while rendering the paddy mirror: canopy fringe cards are skipped there. */
+  uNoFringe: { value: 0 },
 };
 
 export const COMMON = /* glsl */ `
@@ -46,6 +48,7 @@ uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform vec3 uRimColor;
 uniform vec2 uWindDir;
+uniform float uNoFringe;
 uniform sampler2D uShadowMap;
 uniform mat4 uShadowMat;
 uniform float uShadowOn;
@@ -196,18 +199,21 @@ void writeOut(vec3 col, vec3 wN, float mask){
 /** Leaf-cluster alpha shape on a 0..1 card: three overlapping pointed leaves (scalloped edge). */
 export const LEAF_SHAPE = /* glsl */ `
 float leafShape(vec2 uv){
-  float a = 0.0;
-  for (int i = 0; i < 3; i++) {
-    float ang = float(i) * 2.1 + 0.4;
-    vec2 c = vec2(0.5) + vec2(cos(ang), sin(ang)) * 0.17;
-    vec2 d = uv - c;
-    float ca = cos(ang), sa = sin(ang);
-    d = mat2(ca, sa, -sa, ca) * d;
-    // pointed ellipse
-    float e = length(vec2(d.x * 2.2, d.y * 3.6)) + abs(d.x) * 1.4;
-    a = max(a, 1.0 - smoothstep(0.62, 0.66, e));
+  vec2 q = uv - 0.5;
+  if (dot(q, q) < 0.15 * 0.15) return 1.0;
+  // Seven pointed leaves (vesica outlines) of uneven length radiating from a small core: the
+  // card edge reads as a serrated leaf cluster even when a near canopy fills the screen.
+  for (int i = 0; i < 7; i++) {
+    float fi = float(i);
+    float ang = fi * 0.8976 + 0.3 + 0.25 * sin(fi * 2.7);
+    vec2 dv = vec2(cos(ang), sin(ang));
+    float L = 0.12 + 0.075 * fract(sin(fi * 12.9898) * 43758.5453);
+    vec2 d = q - dv * (0.08 + L);
+    float along = dot(d, dv), across = dot(d, vec2(-dv.y, dv.x));
+    float k = 1.0 - along * along / (L * L);
+    if (k > 0.0 && abs(across) < 0.062 * k) return 1.0;
   }
-  return a;
+  return 0.0;
 }
 `;
 
@@ -285,6 +291,7 @@ void main(){
   vObj = position;
   vMat = mt;
   gl_Position = projectionMatrix * viewMatrix * wp;
+  if (mt == 21 && uNoFringe > 0.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 }
 `;
 
@@ -300,21 +307,22 @@ in vec3 vObj;
 flat in int vMat;
 
 vec2 cellular(vec2 p){
-  vec2 i = floor(p), f = fract(p); float d = 8.0; float h = 0.0;
+  vec2 i = floor(p), f = fract(p); float d = 8.0; vec2 best = vec2(0.0);
   for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
     vec2 g = vec2(float(x), float(y));
     vec2 o = vec2(hash12(i + g), hash12(i + g + 17.3));
     vec2 r = g + o - f; float dd = dot(r, r);
-    if (dd < d) { d = dd; h = hash12(i + g + 41.7); }
+    if (dd < d) { d = dd; best = g; }
   }
-  return vec2(sqrt(d), h);
+  return vec2(sqrt(d), hash12(i + best + 41.7));
 }
 
 void main(){
   vec3 N = normalize(vN);
-  if (!gl_FrontFacing && vMat != 17) N = -N;
+  if (!gl_FrontFacing && vMat != 17 && vMat != 21) N = -N;
   vec3 base = vCol;
   float paint = 1.0, rim = 0.55, soft = 0.03, jit = 0.0, leafHi = 0.0;
+  bool card = false;
   vec3 emis = vec3(0.0);
   float mask = uMask;
   int mt = vMat;
@@ -328,11 +336,12 @@ void main(){
     N = normalize(mix(N, vec3(0.0, 1.0, 0.0), 0.5));
     mask = -1.0; paint = 0.3; rim = 0.3;
   }
-  if (mt == 17) {           // leaf card: scalloped alpha-cut leaf cluster on the canopy edge
+  if (mt == 17 || mt == 21) { // leaf card: scalloped alpha-cut leaf cluster on the canopy edge
     float a = leafShape(vUv);
     if (a < 0.5) discard;
     mt = 1;
     mask = -1.0;
+    card = true;
   }
   if (mt == 1) {            // foliage: painted leaf clumps
     gFastShadow = true;
@@ -340,11 +349,18 @@ void main(){
     // Close to the camera the leaf cells get smaller and softer so they read as foliage, not facets.
     float nearK = 1.0 - smoothstep(5.0, 16.0, distance(vWPos, cameraPosition));
     vec2 p = (an.y > 0.55 ? vWPos.xz : (an.x > an.z ? vWPos.zy : vWPos.xy)) * mix(1.9, 4.2, nearK);
-    vec2 c = cellular(p);
     // Second octave from cheap value noise (a second cellular lookup cost ~10% fps under canopies).
     float n2 = vnoise(p * 2.6 + 5.0);
-    jit = ((c.y - 0.5) * 0.7 + (n2 - 0.5) * 0.3 - smoothstep(0.5, 0.95, c.x) * 0.3) * mix(1.0, 0.6, nearK);
-    leafHi = smoothstep(0.62, 0.9, n2) * (1.0 - smoothstep(0.3, 0.8, c.x));
+    if (card) {
+      // Cards already carry a leaf silhouette: value noise alone is enough (and cheap: they overlap).
+      float n1 = vnoise(p * 1.1);
+      jit = ((n1 - 0.5) * 0.8 + (n2 - 0.5) * 0.3) * mix(1.0, 0.6, nearK);
+      leafHi = smoothstep(0.62, 0.9, n2) * 0.6;
+    } else {
+      vec2 c = cellular(p);
+      jit = ((c.y - 0.5) * 0.7 + (n2 - 0.5) * 0.3 - smoothstep(0.5, 0.95, c.x) * 0.3) * mix(1.0, 0.6, nearK);
+      leafHi = smoothstep(0.62, 0.9, n2) * (1.0 - smoothstep(0.3, 0.8, c.x));
+    }
     // Grey light probe: the canopy palette is applied to the toon light response below.
     base = vec3(0.25);
     paint = 1.3; rim = 0.5;
@@ -510,6 +526,7 @@ export function shadowDepthMaterial(): THREE.ShaderMaterial {
       #endif
         vUv = uv; vMat = int(aMat + 0.5);
         gl_Position = projectionMatrix * viewMatrix * m * vec4(position, 1.0);
+        if (vMat == 21) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // fringe cards: no shadow, clipped
       }`,
     fragmentShader: /* glsl */ `
       ${LEAF_SHAPE}

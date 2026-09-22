@@ -103,6 +103,14 @@ export class ChaseCam {
     if (!this.init || hard) {
       this.pos.copy(tp);
       this.look.copy(tl);
+      if (!this.init && !hard) {
+        // Start at the steady chase pose: an exponential follow trails a moving target by v / rate.
+        const v = Math.max(0, c.speed);
+        this.pos.x -= (fx * v) / 4.5;
+        this.pos.z -= (fz * v) / 4.5;
+        this.look.x -= (fx * v) / 6;
+        this.look.z -= (fz * v) / 6;
+      }
       this.init = true;
     } else {
       this.pos.x = damp(this.pos.x, tp.x, 4.5, dt);

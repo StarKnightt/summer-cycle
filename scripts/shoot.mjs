@@ -18,6 +18,7 @@ const arg = (n, d) => {
 const URL = arg("url", "http://localhost:5420/");
 const OUT = path.join(ROOT, arg("out", "shots/iter-2"));
 const QUICK = argv.includes("--quick");
+const CROPS = argv.includes("--crops");
 const EXTRA = arg("extra", "");
 const W = 1920, H = 1080;
 const SOFTWARE = /swiftshader|llvmpipe|softpipe|software|basic render/i;
@@ -56,10 +57,9 @@ try {
   const plan = QUICK
     ? [[0.5, "first_0.5s"], [5, "t05s"], [5.5, "@houses"], [6.3, "@paddy"], [7.0, "@chase"], [12, "t12s"], [13, "@fpp"], [14, "fpp_a"], [14.2, "@tpp"]]
     : [
-        [0.5, "first_0.5s"], [1, "first_1.0s"], [5, "t05s"],
-        [5.6, "@houses"], [6.4, "@paddy"], [7.2, "@chase"],
+        [0.2, "first_0.2s"], [0.5, "first_0.5s"], [1, "first_1.0s"], [5, "t05s"],
         [10, "t10s"], [15, "t15s"], [20, "t20s"], [25, "t25s"], [30, "t30s"], [35, "t35s"], [40, "t40s"],
-        [41, "@fpp"], [41.2, "fpp_blend_0.2"], [42, "fpp_a"], [46, "fpp_b"], [46.2, "@tpp"], [46.4, "tpp_blend_0.2"], [47.4, "fpp_back_tpp"],
+        [41, "@fpp"], [41.1, "fpp_blend_0.1"], [41.2, "fpp_blend_0.2"], [42.5, "fpp"], [43, "@tpp"],
       ];
   for (const [tt, name] of plan) {
     await at(tt);
@@ -85,17 +85,20 @@ try {
     await fs.mkdir(path.dirname(file), { recursive: true });
     await page.screenshot({ path: file, clip: { x: (W - w) / 2 + dx, y: (H - h) / 2 + dy, width: w, height: h } });
   };
-  for (const [m, n] of [["face", "face_34"], ["faceside", "face_profile"], ["back", "face_back"]]) {
-    await cam(m);
-    await page.waitForTimeout(400);
-    await crop(n, 1000, 1000);
+  if (CROPS) {
+    // Rider detail sheet from the side: several crank phases (thigh vs skirt, collar).
+    for (let i = 0; i < 4; i++) {
+      await page.waitForTimeout(170);
+      await crop(`side_rider_${i}`, 700, 600, 0, 60);
+    }
+    for (const [m, n] of [["face", "face_34"], ["faceside", "face_profile"], ["back", "face_back"]]) {
+      await cam(m);
+      await page.waitForTimeout(400);
+      await crop(n, 1000, 1000);
+    }
   }
   await cam("tpp");
   await page.waitForTimeout(1500);
-  await crop("verge_right", 900, 600, 500, 200);
-  await crop("road", 900, 500, 0, 290);
-  await crop("rider_back", 500, 700, -200, 120);
-  await crop("sky_clouds", 1920, 460, 0, -310);
 
   // Collision: manual mode against an in-rail obstacle on the right edge.
   const obs = await page.evaluate(() => window.__ride.obstacles());
@@ -126,9 +129,7 @@ try {
     console.log(`collision walk-back: z ${c.z.toFixed(2)} -> ${cb.z.toFixed(2)} speed=${cb.speed.toFixed(2)} ${cb.z > c.z + 0.5 ? "PASS" : "FAIL"}`);
     // 3) Glancing: slides past along the obstacle instead of stopping.
     await page.evaluate(([o]) => window.__ride.place(o.u - 0.62, o.z + 5, 4.5), [target]);
-    await page.waitForTimeout(700);
-    await shot("collision_slide");
-    await page.waitForTimeout(1800);
+    await page.waitForTimeout(2500);
     c = await page.evaluate(() => window.__ride.ctl);
     console.log(`collision glancing: bike z=${c.z.toFixed(1)} (obstacle ${target.z.toFixed(1)}) speed=${c.speed.toFixed(2)} ${c.z < target.z - 1 ? "PASS (slid past)" : "FAIL"}`);
   } else console.log("collision: no in-rail obstacle found");
@@ -137,7 +138,7 @@ try {
   await page.evaluate(() => window.__ride.place(-0.9, 9, 4.5));
   await page.waitForTimeout(1600);
   await shot("canopy_near");
-  await crop("canopy_near", 900, 450, -510, -315);
+  if (CROPS) await crop("canopy_near", 900, 450, -510, -315);
 
   console.log(`audio: ${await page.evaluate(() => window.__ride.audio)}`);
   const log = await page.evaluate(() => window.__ride.fpsLog);

@@ -136,7 +136,9 @@ export class PaddyReflection {
 
     renderer.setRenderTarget(this.rt);
     renderer.clear();
+    G.uNoFringe.value = 1;
     renderer.render(scene, vc);
+    G.uNoFringe.value = 0;
     renderer.setRenderTarget(null);
   }
 }

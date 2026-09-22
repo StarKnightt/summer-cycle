@@ -133,7 +133,7 @@ function pottedPlant(r: number, seed: number): Geo[] {
 }
 
 /** Leaf card: alpha-cut leaf cluster quad facing `dir`, normal set to `nrm` (for coherent shading). */
-export function leafCard(c: THREE.Vector3, dir: THREE.Vector3, size: number, color: string, nrm: THREE.Vector3, roll: number): Geo {
+export function leafCard(c: THREE.Vector3, dir: THREE.Vector3, size: number, color: string, nrm: THREE.Vector3, roll: number, mat: number = M.leafCard): Geo {
   const g = new THREE.PlaneGeometry(size, size);
   g.rotateZ(roll);
   const q = new THREE.Quaternion().setFromUnitVectors(V(0, 0, 1), dir.clone().normalize());
@@ -141,7 +141,7 @@ export function leafCard(c: THREE.Vector3, dir: THREE.Vector3, size: number, col
   g.translate(c.x, c.y, c.z);
   const n = g.attributes.normal;
   for (let i = 0; i < n.count; i++) n.setXYZ(i, nrm.x, nrm.y, nrm.z);
-  return prep(g, color, M.leafCard);
+  return prep(g, color, mat);
 }
 
 /** Climbing vines: leaf cards scattered up a wall or along a rail (local, facing +Z). */
@@ -379,7 +379,7 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
         spherize(g, center, 0.7, 1.2);
         out.push(g);
       }
-      for (let i = 0; i < 230; i++) {
+      for (let i = 0; i < 100; i++) {
         const dir = randDir(r);
         let rad = cr * range(r, 0.98, 1.16);
         const c = center.clone().add(V(dir.x * rad, dir.y * rad * sy, dir.z * rad));
@@ -392,6 +392,24 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
         const nrm = dir.clone().normalize();
         const facing = dir.clone().add(V(range(r, -0.5, 0.5), range(r, -0.3, 0.5), range(r, -0.5, 0.5))).normalize();
         out.push(leafCard(c, facing, cr * range(r, 0.18, 0.28), LEAF[Math.floor(r() * LEAF.length)], nrm, r() * 6.28));
+      }
+      // Serrated fringe: cards straddling the lower rim and underside so the silhouette seen from
+      // below breaks into leaf clusters instead of a smooth blob edge.
+      for (let i = 0; i < 64; i++) {
+        const a = r() * Math.PI * 2;
+        const dy = range(r, -0.9, 0.3);
+        const dir = V(Math.cos(a) * Math.sqrt(1 - dy * dy), dy, Math.sin(a) * Math.sqrt(1 - dy * dy));
+        let rad = cr * 1.6;
+        const c = center.clone().add(V(dir.x * rad, dir.y * rad * sy, dir.z * rad));
+        // surfDist is measured to a 0.92 shell, so this straddles the real (noisy) blob surface.
+        const out0 = range(r, 0.45, 0.75);
+        for (let s = 0; s < 40 && surfDist(c) > out0; s++) {
+          rad *= 0.96;
+          c.copy(center).add(V(dir.x * rad, dir.y * rad * sy, dir.z * rad));
+        }
+        if (surfDist(c) > out0 + 0.2) continue;
+        const facing = dir.clone().add(V(range(r, -0.6, 0.6), range(r, -0.6, 0.2), range(r, -0.6, 0.6))).normalize();
+        out.push(leafCard(c, facing, cr * range(r, 0.24, 0.34), LEAF[Math.floor(r() * LEAF.length)], dir, r() * 6.28, M.fringeCard));
       }
     }
   } else if (kind === "bush") {
@@ -411,18 +429,31 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
         out.push(leafCard(c, dir, range(r, 0.35, 0.55), LEAF[Math.floor(r() * LEAF.length)], dir, r() * 6.28));
       }
   } else {
-    // Japanese cedar: stacked cones of lumpy foliage.
+    // Japanese cedar: one continuous lumpy spire (overlapping masses, no separated tiers).
     const h = range(r, 9, 12);
-    out.push(beam(V(0, -0.3, 0), V(0, h, 0), 0.3, "#4e3a2a", M.bark, 6, 0.08));
-    const tiers = 6;
-    for (let i = 0; i < tiers; i++) {
-      const t = i / (tiers - 1);
-      const y = h * (0.28 + t * 0.72);
-      const rad = (1 - t) * 1.9 + 0.5;
-      const g = prep(blob(rad, 1, 0.22, seed + i * 11), i % 2 ? "#15322a" : "#1a392b", M.foliage);
-      g.scale(1, 0.75, 1);
-      g.translate(0, y, 0);
-      spherize(g, V(0, y - rad * 0.3, 0), 0.55, 1.4);
+    out.push(beam(V(0, -0.3, 0), V(0, h * 0.9, 0), 0.3, "#4e3a2a", M.bark, 6, 0.08));
+    const y0 = h * 0.3, y1 = h * 1.02;
+    const coneR = (y: number) => 2.1 * (1 - (y - y0) / (y1 - y0)) + 0.35;
+    const core = lod ? 4 : 5;
+    for (let i = 0; i < core; i++) {
+      const t = i / (core - 1);
+      const y = y0 + 0.4 + t * (y1 - y0 - 1.0);
+      const rad = coneR(y) * 0.95 + 0.25;
+      const g = prep(blob(rad, 1, 0.2, seed + i * 11), LEAF[i % LEAF.length], M.foliage);
+      g.scale(1, 1.25, 1);
+      g.translate(range(r, -0.12, 0.12), y, range(r, -0.12, 0.12));
+      spherize(g, V(0, y - 0.6, 0), 0.6, 0.7);
+      out.push(g);
+    }
+    // Lumps on the flanks break the cone into a soft, irregular silhouette.
+    for (let i = 0; i < (lod ? 3 : 8); i++) {
+      const y = y0 + 0.3 + r() * (y1 - y0 - 1.4);
+      const a = r() * Math.PI * 2;
+      const cr = coneR(y) * 0.85;
+      const g = prep(blob(cr * range(r, 0.4, 0.6) + 0.2, 1, 0.2, seed + 100 + i), LEAF[Math.floor(r() * LEAF.length)], M.foliage);
+      g.scale(1, 1.1, 1);
+      g.translate(Math.cos(a) * cr, y, Math.sin(a) * cr);
+      spherize(g, V(0, y - 0.6, 0), 0.6, 0.7);
       out.push(g);
     }
   }

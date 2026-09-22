@@ -327,6 +327,8 @@ export class Rider {
   private skirt!: THREE.Mesh;
   private skirtGeo!: THREE.BufferGeometry;
   private skirtWaist = new THREE.Vector3();
+  private thighA: THREE.Vector3[] = [];
+  private thighB: THREE.Vector3[] = [];
   private thigh: Limb[] = [];
   private shin: Limb[] = [];
   private upperArm: Limb[] = [];
@@ -625,7 +627,8 @@ export class Rider {
     g.setIndex(idx);
     prep(g, null, M.cloth);
     this.skirtGeo = g;
-    this.skirtWaist.copy(hip).add(V(0, -0.04, 0.0));
+    // Waist ring at the blouse band: high enough that the thigh tops never rise above the hem line.
+    this.skirtWaist.copy(hip).add(V(0, 0.005, 0.0));
     this.skirt = new THREE.Mesh(g, uber(rid, 1, THREE.DoubleSide));
     this.skirt.frustumCulled = false;
     b.add(this.skirt);
@@ -659,9 +662,10 @@ export class Rider {
       sleeve.translate(s * 0.162, 0.41, -0.005);
       this.add(sleeve, this.torso, rid);
       // Navy sleeve cuff stripe.
-      const cuff = prep(new THREE.TorusGeometry(0.052, 0.008, 5, 14), NAVY, M.cloth);
-      cuff.rotateZ(Math.PI / 2);
-      cuff.translate(s * 0.19, 0.37, -0.005);
+      // Hem band wraps the sleeve horizontally (a ring facing sideways read as a stray letter).
+      const cuff = prep(new THREE.TorusGeometry(0.043, 0.0075, 5, 16), NAVY, M.cloth);
+      cuff.rotateX(Math.PI / 2);
+      cuff.translate(s * 0.165, 0.366, -0.005);
       this.add(cuff, this.torso, rid);
     }
     this.add(xf(box(0.25, 0.05, 0.17, NAVY, M.cloth), 0, 0.03, 0), this.torso, rid);
@@ -669,9 +673,26 @@ export class Rider {
     const WHITE = "#f4f2ec", RED = "#c8363a";
     const tp = this.torso;
     this.add(torsoPatch(-0.116, 0.116, 0.27, 0.48, 1, 0.006, NAVY, 10, 6), tp, rid);
-    for (const [y0, x1] of [[0.288, 0.102], [0.31, 0.082]]) {
-      this.add(torsoPatch(-x1, x1, y0, y0 + 0.01, 1, 0.009, WHITE, 10, 1), tp, rid);
-      for (const s of [-1, 1]) this.add(torsoPatch(Math.min(s * x1, s * (x1 - 0.01)), Math.max(s * x1, s * (x1 - 0.01)), y0, 0.476, 1, 0.009, WHITE, 1, 6), tp, rid);
+    // One white stripe inset along the collar's three edges (a single connected U, corners overlap).
+    const sy = 0.29, sx = 0.098, sw = 0.012;
+    this.add(torsoPatch(-sx, sx, sy, sy + sw, 1, 0.009, WHITE, 10, 1), tp, rid);
+    for (const s of [-1, 1]) this.add(torsoPatch(Math.min(s * sx, s * (sx - sw)), Math.max(s * sx, s * (sx - sw)), sy, 0.478, 1, 0.009, WHITE, 1, 6), tp, rid);
+    // Collar bands over the shoulder tops, joining the back panel to the front lapels.
+    for (const s of [-1, 1]) {
+      const pts: THREE.Vector3[] = [], ups: THREE.Vector3[] = [], w: number[] = [], th: number[] = [];
+      const A = 0.1458, B = 0.0567, C = 0.0972;
+      for (let k = 0; k <= 8; k++) {
+        const t = k / 8;
+        const x = s * (0.108 + (0.078 - 0.108) * t);
+        const q = Math.sqrt(1 - (x / A) ** 2);
+        const phi = 1.25 - 2.45 * t; // back (+z) over the top to the front (-z)
+        const n = V(x / (A * A), (q * Math.cos(phi)) / B, (q * Math.sin(phi)) / C).normalize();
+        pts.push(V(x, 0.46 + B * q * Math.cos(phi), C * q * Math.sin(phi)).addScaledVector(n, 0.006));
+        ups.push(n);
+        w.push(0.03 - 0.008 * t);
+        th.push(0.003);
+      }
+      this.add(ribbon(pts, ups, w, th, NAVY, M.cloth, 1), tp, rid);
     }
     // Front lapels forming a V, then the red sailor scarf: triangular knot + two hanging tails.
     for (const s of [-1, 1]) {
@@ -879,12 +900,28 @@ export class Rider {
         const flut = Math.sin(time * 9 + a * 3 + j) * 0.012 * sp * t * t;
         const drift = 0.05 * sp * t * t * (1 - f);
         const k = j * (cols + 1) + i;
-        p.setXYZ(
-          k,
+        _sp.set(
           W.x + rx * rad * 1.12 + rx * flut,
           W.y + d.y * len * t + flut * 0.6,
           W.z + rz * rad * 0.9 + d.z * len * t + drift,
         );
+        // Keep the cloth outside both thighs (the knee rises through the hem at the top of the stroke).
+        // Front half only lifts (never tucks under the leg); the lift fades toward the sides.
+        if (j > 0 && f > 0.3)
+          for (let l = 0; l < this.thighA.length; l++) {
+            const A = this.thighA[l], B = this.thighB[l];
+            const ax = B.x - A.x, az = B.z - A.z;
+            const u = Math.min(1, Math.max(0, ((_sp.x - A.x) * ax + (_sp.z - A.z) * az) / (ax * ax + az * az + 1e-6)));
+            _sr.copy(A).lerp(B, u);
+            const lat = Math.hypot(_sp.x - _sr.x, _sp.z - _sr.z);
+            const R = 0.09;
+            if (lat < R) {
+              // Faded out toward the hip so the waistband never folds up over the blouse hem.
+              const minY = _sr.y + Math.sqrt(R * R - lat * lat) * smooth(0.3, 0.55, f) * smooth(0.0, 0.3, u);
+              if (_sp.y < minY) _sp.y = minY;
+            }
+          }
+        p.setXYZ(k, _sp.x, _sp.y, _sp.z);
       }
     }
     p.needsUpdate = true;
@@ -903,7 +940,8 @@ export class Rider {
         else c.layers.enable(0);
       });
     set(this.torso);
-    for (const l of this.upperArm) set(l.mesh);
+    for (const l of [...this.upperArm, ...this.thigh, ...this.shin]) set(l.mesh);
+    for (const m of [...this.elbows, ...this.knees, ...this.feet]) set(m);
   }
   private fppOn = false;
 
@@ -946,13 +984,12 @@ export class Rider {
       p.rotation.x = (i === 0 ? -this.head.rotation.x - 0.22 - sp * 0.22 : -0.05 - sp * 0.08) + wave;
       p.rotation.z = Math.sin(s.time * 2.4 - i * 1.1) * 0.09 * (0.4 + sp) + (i === 0 ? s.steer * 0.3 + s.lean * 0.35 : 0);
     }
-    this.drapeSkirt(s.speed, s.time);
-
     this.root.updateMatrixWorld(true);
     const bodyInv = new THREE.Matrix4().copy(this.body.matrixWorld).invert();
     const toBody = (o: THREE.Object3D, v: THREE.Vector3) => v.applyMatrix4(o.matrixWorld).applyMatrix4(bodyInv);
 
-    const hipBase = V(0, SEAT.y + 0.07, SEAT.z - 0.03);
+    // Hip joints sit just under the skirt's waist ring so the open thigh tube never shows above it.
+    const hipBase = V(0, SEAT.y + 0.035, SEAT.z - 0.03);
     const mid = new THREE.Vector3();
     for (let i = 0; i < 2; i++) {
       const side = i === 0 ? 1 : -1;
@@ -962,6 +999,8 @@ export class Rider {
       const hip = hipBase.clone().add(V(side * 0.085, 0, 0));
       ik(hip, ankle, 0.43, 0.42, V(side * 0.12, 0.4, -1).normalize(), mid);
       this.thigh[i].set(hip, mid);
+      (this.thighA[i] ??= new THREE.Vector3()).copy(hip);
+      (this.thighB[i] ??= new THREE.Vector3()).copy(mid);
       this.shin[i].set(mid, ankle);
       this.knees[i].position.copy(mid);
       this.feet[i].position.copy(ankle).add(V(0, -0.03, 0));
@@ -973,13 +1012,17 @@ export class Rider {
       const reach = shoulder.distanceTo(wrist) / (2 * Math.cos((9 * Math.PI) / 180));
       ik(shoulder, wrist, reach * 1.04, reach * 0.96, V(side * 0.45, -0.8, 0.45).normalize(), mid);
       this.upperArm[i].set(shoulder, mid);
-      this.foreArm[i].set(mid, wrist);
+      // First person: the elbow is hidden, so run the forearm on past the near plane (no cut end).
+      if (this.fppOn) this.foreArm[i].set(mid.clone().lerp(wrist, -1.2), wrist);
+      else this.foreArm[i].set(mid, wrist);
       this.elbows[i].position.copy(mid);
     }
+    this.drapeSkirt(s.speed, s.time);
     void dt;
   }
 }
 
 const SKIRT_N = 14;
+const _sp = new THREE.Vector3(), _sr = new THREE.Vector3();
 
 export const BIKE = { WHEEL_R, WHEELBASE: FRONT.distanceTo(REAR) };

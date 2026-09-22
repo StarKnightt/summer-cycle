@@ -7,6 +7,8 @@ export const M = {
   plain: 0, foliage: 1, planks: 2, roof: 3, shoji: 4, glass: 5, grass: 6, skin: 7, cloth: 8,
   bark: 9, metal: 10, ground: 11, butterfly: 12, stone: 13, lantern: 14, hair: 15, guard: 16,
   leafCard: 17, mote: 18, distant: 19, flower: 20,
+  /** Leaf card on a canopy's outer rim: drawn like leafCard, but casts no sun shadow. */
+  fringeCard: 21,
 } as const;
 
 /** Outline groups: lines are drawn where neighbouring pixels belong to different groups. */
