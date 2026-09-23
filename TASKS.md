@@ -19,9 +19,12 @@ The game is live on GitHub Pages (public repo StarKnightt/summer-cycle), the Ver
 - [x] Pointer lock after loader + mouse look while riding/FPP (`feature/mouse`, merged, branch + worktree removed)
 
 - [x] Rename to Summer Cycle (title, loader, README, package name, audio lab)
+- [x] Character rebuild (`feature/face`): 20-year-old rider matching `refs/girl_model_sheet.png` + production refs — sculpted oval head with blunt rounded chin, warm-brown eyes, glasses, airy bangs, nape ponytail + scrunchie; healthy adult body (~7 heads, lofted torso, tapered limbs, hands, loafers); white blouse + dusty-blue midi skirt (seated drape); loader SVG girl to match. Tools: `scripts/face-shots.mjs`, `face-compare.py`. Shots: `shots/face/`
 
 ## Found during the perf pass
 - [ ] GPU is often shared with other processes (user's Chrome ~79% 3D engine at times, other agents' headless Chromium): benchmark only when `nvidia-smi` is near idle; `scripts/perf.mjs` prints per-pass GPU ms to spot it
+- [ ] Global ink colour is near-black (`post.ts` uInk); production refs use warm brown ≈ #3A2A22 — worth a look in the critic pass (not changed in `feature/face`, affects the whole world)
+- [ ] Character FPS unconfirmed on an idle GPU (GPU at 99% from other processes during `feature/face`); rider cost vs master: same mesh count (283 vs 281), +15k tris
 - [x] `refs/girl_model_sheet.png` committed (character target); `refs/web/` + `scripts/_refgrab.mjs` gitignored
 
 ## Remaining
