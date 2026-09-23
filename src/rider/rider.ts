@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { ID, M, beam, box, cyl, merge, prep, sphere, xf } from "../world/geo";
-import { uber } from "../render/materials";
+import { G, uber } from "../render/materials";
 import { LAYER_SHADOW } from "../render/lightpasses";
 
 /**
@@ -470,6 +470,10 @@ function blobShadow(w: number, d: number): THREE.Mesh {
  * 4: like 1 without the side fade (wrapped bands).
  */
 const softCache = new Map<string, THREE.ShaderMaterial>();
+/** Unlit face decals follow the time-of-day light, normalised so daytime looks as authored. */
+const DAY_LIGHT = new THREE.Color("#8a90b0").lerp(new THREE.Color("#fff1dc"), 0.75);
+const LIGHT_GLSL = `uniform vec3 uSunColor; uniform vec3 uShadowTint;
+  vec3 todLight(){ return clamp(mix(uShadowTint, uSunColor, 0.75) / vec3(${DAY_LIGHT.r.toFixed(4)}, ${DAY_LIGHT.g.toFixed(4)}, ${DAY_LIGHT.b.toFixed(4)}), 0.0, 1.2); }`;
 function softDecal(rgb: [number, number, number], alpha: number, mode: number): THREE.ShaderMaterial {
   const key = rgb.join() + "|" + alpha + "|" + mode;
   let m = softCache.get(key);
@@ -478,9 +482,10 @@ function softDecal(rgb: [number, number, number], alpha: number, mode: number): 
       glslVersion: THREE.GLSL3,
       transparent: true,
       depthWrite: false,
-      uniforms: { uCol: { value: new THREE.Vector3(...rgb) }, uA: { value: alpha }, uMode: { value: mode } },
+      uniforms: { uCol: { value: new THREE.Vector3(...rgb) }, uA: { value: alpha }, uMode: { value: mode }, uSunColor: G.uSunColor, uShadowTint: G.uShadowTint },
       vertexShader: `out vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: `uniform vec3 uCol; uniform float uA; uniform int uMode; in vec2 vUv;
+      fragmentShader: `${LIGHT_GLSL}
+        uniform vec3 uCol; uniform float uA; uniform int uMode; in vec2 vUv;
         layout(location=0) out vec4 gColor; layout(location=1) out vec4 gNormal;
         void main(){
           float a;
@@ -489,7 +494,7 @@ function softDecal(rgb: [number, number, number], alpha: number, mode: number): 
           else if (uMode == 1) a = pow(clamp(vUv.y, 0.0, 1.0), 1.6) * side;
           else if (uMode == 2) a = smoothstep(0.35, 0.62, vUv.y) * side;
           else a = pow(clamp(vUv.y, 0.0, 1.0), 1.6);
-          gColor = vec4(uCol, a * uA); gNormal = vec4(0.0);
+          gColor = vec4(uCol * todLight(), a * uA); gNormal = vec4(0.0);
         }`,
     });
     softCache.set(key, m);
@@ -505,11 +510,12 @@ function lensMaterial(): THREE.ShaderMaterial {
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    uniforms: {},
+    uniforms: { uSunColor: G.uSunColor, uShadowTint: G.uShadowTint },
     vertexShader: `out vec2 vUv; out vec3 vN; out vec3 vV;
       void main(){ vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz);
         gl_Position = projectionMatrix * mv; }`,
-    fragmentShader: `in vec2 vUv; in vec3 vN; in vec3 vV; layout(location=0) out vec4 gColor; layout(location=1) out vec4 gNormal;
+    fragmentShader: `${LIGHT_GLSL}
+      in vec2 vUv; in vec3 vN; in vec3 vV; layout(location=0) out vec4 gColor; layout(location=1) out vec4 gNormal;
       void main(){
         vec2 p = (vUv - 0.5) * 2.0;
         float r = length(p);
@@ -523,7 +529,7 @@ function lensMaterial(): THREE.ShaderMaterial {
         float a = 0.02 + 0.04 * fres;
         vec3 tint = vec3(0.82, 0.92, 1.0);
         vec3 col = mix(tint, vec3(1.0), glint);
-        gColor = vec4(col, clamp(a + glint * 0.35, 0.0, 0.6));
+        gColor = vec4(col * todLight(), clamp(a + glint * 0.35, 0.0, 0.6));
         gNormal = vec4(0.0);
       }`,
   });
