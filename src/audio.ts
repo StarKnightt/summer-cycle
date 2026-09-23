@@ -142,6 +142,12 @@ export class RideAudio {
     this.save();
   }
 
+  /** Pause menu: duck to near-silence over ~0.4 s, and back. */
+  setPaused(p: boolean): void {
+    this.ducked = p;
+    this.applyVolume(0.13);
+  }
+
   toggleMute(): boolean {
     this.setMuted(!this.mute);
     return this.mute;
@@ -171,8 +177,10 @@ export class RideAudio {
     this.engine = null;
   }
 
+  private ducked = false;
+
   private applyVolume(tau = 0.08): void {
-    if (this.ctx && this.engine) this.engine.setVolume(this.mute ? 0 : this.vol, this.ctx.currentTime, tau);
+    if (this.ctx && this.engine) this.engine.setVolume(this.mute ? 0 : this.ducked ? this.vol * 0.03 : this.vol, this.ctx.currentTime, tau);
   }
 
   private save(): void {

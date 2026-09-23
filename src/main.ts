@@ -13,6 +13,7 @@ import { Explore, houseAt } from "./rider/onfoot";
 import { Input } from "./core/input";
 import { RideAudio } from "./audio";
 import { Loader, fatal, type Stage } from "./loader";
+import { Pause } from "./pause";
 import { precompile, warmDraws } from "./render/precompile";
 import { leafAtlas } from "./render/leafAtlas";
 import { signAtlas } from "./render/signAtlas";
@@ -249,7 +250,7 @@ Object.assign(lookHint.style, {
 document.body.appendChild(lookHint);
 let lookHintTimer = 0;
 const showLookHint = () => {
-  if (AUTOPLAY || explore.onFoot) return;
+  if (AUTOPLAY || explore.onFoot || pause.paused) return;
   lookHint.style.opacity = "1";
   clearTimeout(lookHintTimer);
   lookHintTimer = window.setTimeout(() => (lookHint.style.opacity = "0"), 2000);
@@ -259,12 +260,29 @@ document.addEventListener("pointerlockchange", () => {
   else showLookHint();
 });
 
+// Esc: tap = pause menu, hold = just free the mouse. Blur / tab switch pause too.
+const FULLSCREEN = params.get("fs") !== "0";
+const pause = new Pause(canvasEl, {
+  onPause: () => {
+    audio.setPaused(true);
+    lookHint.style.opacity = "0";
+  },
+  onResume: (viaGesture) => {
+    audio.setPaused(false);
+    last = performance.now();
+    if (viaGesture && !AUTOPLAY) lockPointer();
+  },
+  lookHint: () => showLookHint(),
+});
+
 addEventListener("resize", () => {
   renderer.setSize(innerWidth, innerHeight);
   chase.cam.aspect = innerWidth / innerHeight;
   chase.cam.updateProjectionMatrix();
   post.setSize(innerWidth, innerHeight);
   reflection.setSize(Math.floor(innerWidth * 0.5), Math.floor(innerHeight * 0.5));
+  // Resizing clears the canvas: redraw the frozen frame once.
+  if (pause.paused) post.render(scene, chase.cam, t);
 });
 
 let frames = 0;
@@ -296,6 +314,12 @@ let warm = 0;
 /** Intro mode: the finished frame waits (clock frozen, loop idle) behind the loader for a gesture. */
 let waiting = false;
 function frame(now: number) {
+  if (pause.paused) {
+    // Frozen: no simulation and no drawing (the last frame stays on screen); no dt jump on resume.
+    last = now;
+    requestAnimationFrame(frame);
+    return;
+  }
   const interval = now - last;
   let dt = interval / 1000;
   last = now;
@@ -312,6 +336,7 @@ function frame(now: number) {
   t += dt;
   G.uTime.value = t;
   explore.enabled = started && !waiting;
+  pause.enabled = started && !waiting;
 
   if (explore.bikeActive) {
     // Sub-step so a frame hitch can never tunnel the bike through a thin obstacle.
@@ -435,6 +460,7 @@ function frame(now: number) {
       waiting = true;
       loader.ready((viaPointer) => {
         audio.start();
+        if (viaPointer && FULLSCREEN) void pause.enterFullscreen();
         if (!AUTOPLAY) {
           if (viaPointer) lockPointer();
           else showLookHint();
@@ -492,6 +518,8 @@ window.__ride = {
   },
   bootLog,
   fpsLog,
+  /** Pause menu (paused, keyLock can be forced for tests). */
+  pause,
   get time() {
     return t;
   },

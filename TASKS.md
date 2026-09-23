@@ -30,6 +30,7 @@ The game is live on GitHub Pages (public repo StarKnightt/summer-cycle), the Ver
 
 ## Remaining
 - [x] Merge `feature/mouse`
+- [x] Pause menu (`feature/pause`): tap Esc = washi pause overlay (sim + render frozen, audio ducked, keys swallowed), hold Esc = free the mouse only; blur/tab switch pauses; loader click goes fullscreen + Keyboard Lock on Esc (`&fs=0` skips)
 - [ ] Final critic review (all checkpoints + close-up detail crops vs refs/user_*.jpg, face at riding distance, all 4 times of day, FPS on idle GPU, mark anything unconfirmed)
 - [ ] Code-review pass on the full diff since the last release (blocking issues only)
 - [ ] Fix round for critic/review findings

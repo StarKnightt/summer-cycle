@@ -71,7 +71,7 @@ export class Loader {
     this.show("click or press any key to ride", true);
     const hint = this.el.querySelector<HTMLElement>(".hint");
     const auto = new URLSearchParams(location.search).has("autoplay");
-    if (hint && !auto) hint.innerHTML = "<b>W</b> pedal &nbsp;·&nbsp; <b>Shift</b> sprint &nbsp;·&nbsp; <b>A D</b> steer &nbsp;·&nbsp; <b>S</b> brake &nbsp;·&nbsp; <b>V</b> view &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>B</b> bell";
+    if (hint && !auto) hint.innerHTML = "<b>W</b> pedal &nbsp;·&nbsp; <b>Shift</b> sprint &nbsp;·&nbsp; <b>A D</b> steer &nbsp;·&nbsp; <b>S</b> brake &nbsp;·&nbsp; <b>V</b> view &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>B</b> bell &nbsp;·&nbsp; <b>Esc</b> pause";
   }
 
   /** Watercolour dissolve: holes bloom outward from the middle through the paper, pigment pooling at the edges. */

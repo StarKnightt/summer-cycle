@@ -157,6 +157,124 @@ try {
     await p3.close();
   }
 
+  if (want("pause")) {
+    // Esc tap pauses (autoplay too), hold only frees the mouse; blur pauses; nothing resumes on its own.
+    const P = () => R(() => ({ paused: window.__ride.pause.paused, t: window.__ride.time, cam: window.__ride.camMode, tod: JSON.stringify(window.__ride.timeOfDay), veil: getComputedStyle(document.getElementById("pause")).opacity }));
+    const esc = async (ms) => {
+      await page.keyboard.down("Escape");
+      await wait(ms);
+      await page.keyboard.up("Escape");
+    };
+    await R(() => window.__ride.setCam("tpp"));
+    await page.keyboard.down("KeyW");
+    await wait(300);
+    await esc(90);
+    await page.keyboard.up("KeyW");
+    await wait(500);
+    let a = await P();
+    await wait(1000);
+    let b = await P();
+    ok("Esc tap pauses", a.paused && b.paused && Number(b.veil) > 0.95, `paused=${b.paused} veil=${b.veil}`);
+    ok("sim clock frozen while paused", a.t === b.t, `t ${a.t.toFixed(3)} -> ${b.t.toFixed(3)}`);
+    await page.screenshot({ path: path.join(OUT, "pause_overlay_1920.png") });
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await wait(400);
+    await page.screenshot({ path: path.join(OUT, "pause_overlay_1366.png") });
+    await page.setViewportSize({ width: W, height: H });
+    await wait(300);
+    await page.keyboard.press("KeyC");
+    await page.keyboard.press("KeyT");
+    await page.keyboard.press("KeyF");
+    await wait(300);
+    const c = await P();
+    const m = (await state()).mode;
+    ok("keys don't leak while paused", c.cam === a.cam && c.tod === a.tod && m === "ride" && c.t === a.t, `cam=${c.cam} mode=${m}`);
+    await esc(90);
+    await wait(50);
+    const r0 = await P();
+    await wait(1000);
+    const r1 = await P();
+    ok("Esc tap resumes, clock doesn't jump", !r0.paused && r0.t - a.t < 0.15 && r1.t - r0.t > 0.8, `jump=${(r0.t - a.t).toFixed(3)} then +${(r1.t - r0.t).toFixed(2)}s`);
+    await esc(700);
+    await wait(300);
+    a = await P();
+    ok("Esc hold does not pause", !a.paused, `paused=${a.paused}`);
+    await R(() => dispatchEvent(new Event("blur")));
+    await wait(1800);
+    a = await P();
+    ok("blur pauses, no auto-resume (autoplay)", a.paused, `paused=${a.paused}`);
+    await page.keyboard.press("Enter");
+    await wait(200);
+    ok("Enter resumes", !(await P()).paused, "");
+    await esc(90);
+    await wait(400);
+    await page.mouse.click(W / 2, H / 2);
+    await wait(300);
+    ok("click resumes", !(await P()).paused, "");
+    // Keyboard-lock path (mocked): hold is decided on keydown, tap still pauses.
+    await R(() => (window.__ride.pause.keyLock = true));
+    await page.keyboard.down("Escape");
+    await wait(700);
+    a = await P();
+    await page.keyboard.up("Escape");
+    await wait(200);
+    b = await P();
+    ok("keyboard lock: hold only frees the mouse", !a.paused && !b.paused, `during=${a.paused} after=${b.paused}`);
+    await esc(90);
+    await wait(300);
+    a = await P();
+    await esc(90);
+    await wait(300);
+    b = await P();
+    ok("keyboard lock: tap pauses / tap resumes", a.paused && !b.paused, `${a.paused} -> ${b.paused}`);
+    await R(() => (window.__ride.pause.keyLock = false));
+  }
+
+  if (ONLY.includes("pauselock")) {
+    // Real pointer lock (no autoplay): hold frees the mouse without pausing; tap pauses; click resumes + re-locks.
+    const p4 = await browser.newPage({ viewport: { width: 1366, height: 768 } });
+    p4.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
+    p4.on("console", (m) => {
+      if (m.type() === "error") errors.push(`error: ${m.text()}`);
+    });
+    await p4.goto(URL, { waitUntil: "load" });
+    await p4.waitForFunction(() => window.__ride?.waiting === true, null, { timeout: 90_000 });
+    await p4.waitForTimeout(1200);
+    await p4.mouse.click(683, 384);
+    await p4.waitForTimeout(1200);
+    const Q = () => p4.evaluate(() => ({ paused: window.__ride.pause.paused, locked: window.__ride.look.locked, keyLock: window.__ride.pause.keyLock, fs: !!document.fullscreenElement }));
+    let q = await Q();
+    console.log("after loader click", JSON.stringify(q));
+    ok("loader click: pointer locked", q.locked, JSON.stringify(q));
+    for (const kl of [q.keyLock, !q.keyLock]) {
+      await p4.evaluate((v) => (window.__ride.pause.keyLock = v), kl);
+      if (!(await Q()).locked) {
+        await p4.mouse.click(683, 384);
+        await p4.waitForTimeout(500);
+      }
+      await p4.keyboard.down("Escape");
+      await p4.waitForTimeout(800);
+      const mid = await Q();
+      await p4.keyboard.up("Escape");
+      await p4.waitForTimeout(300);
+      q = await Q();
+      ok(`[keyLock=${kl}] hold: mouse freed, not paused`, (kl ? !mid.locked : true) && !mid.paused && !q.locked && !q.paused, `mid=${JSON.stringify(mid)} after=${JSON.stringify(q)}`);
+      await p4.mouse.click(683, 384);
+      await p4.waitForTimeout(500);
+      await p4.keyboard.down("Escape");
+      await p4.waitForTimeout(80);
+      await p4.keyboard.up("Escape");
+      await p4.waitForTimeout(400);
+      q = await Q();
+      ok(`[keyLock=${kl}] tap: paused, mouse free`, q.paused && !q.locked, JSON.stringify(q));
+      await p4.mouse.click(683, 384);
+      await p4.waitForTimeout(600);
+      q = await Q();
+      ok(`[keyLock=${kl}] click resumes + re-locks`, !q.paused && q.locked, JSON.stringify(q));
+    }
+    await p4.close();
+  }
+
   if (ONLY.includes("fpp")) {
     // First person: arms must read as whole arms running out of frame (no cut/flat ends).
     await R(() => window.__ride.setCam("fpp"));

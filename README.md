@@ -50,7 +50,7 @@ development-only sound playground served by `pnpm dev`.
 
 | Input | Action |
 |---|---|
-| Click | Start the ride and lock the pointer (audio starts on the first click or key) |
+| Click | Start the ride: goes fullscreen and locks the pointer (audio starts on the first click or key) |
 | Mouse | Look around: orbit the chase camera, or turn her head in first person; eases back when idle |
 | W / Up | Pedal harder; she cruises on her own |
 | S / Down | Brake; held at a standstill, walk the bike backward |
@@ -62,7 +62,12 @@ development-only sound playground served by `pnpm dev`.
 | T | Time of day: afternoon, golden hour, sunset, dusk |
 | B | Ring the bell |
 | M | Mute |
-| Esc | Release the pointer; click the scene to take it again |
+| Esc (tap) | Pause; tap again, Enter, Space or click to resume. Switching tabs or windows also pauses |
+| Esc (hold) | Release the pointer only, without pausing; click the scene to take it again |
+
+In Chromium, fullscreen also locks the Esc key to the game (Keyboard Lock), so a tap and a hold can
+be told apart; hold Esc for a couple of seconds to leave fullscreen. Autoplay pauses on Esc too and
+never resumes on its own.
 
 On foot, W A S D walk relative to the camera, the mouse orbits it and the wheel zooms. She can
 wander the verges, the lots around the houses and the paddy banks, but not the water, the houses,
@@ -75,6 +80,7 @@ the poles, the trunks or the fences.
 | `time=golden` | Starts at `afternoon` (default), `golden`, `sunset` or `dusk` |
 | `timelapse=1` | Sets the sun continuously over 40 s, afternoon to dusk |
 | `cam=fpp` | Starts in first person |
+| `fs=0` | Does not go fullscreen on the starting click |
 | `start=-54` | Starts at another point along the road (metres; -54 is the opening composition) |
 | `msaa=0\|2\|4` | Pins the anti-aliasing level instead of adapting it |
 | `prof=1` | Turns on the GPU timer-query profiler used by `scripts/perf.mjs` |
