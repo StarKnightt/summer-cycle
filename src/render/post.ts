@@ -135,7 +135,10 @@ export class Post {
           }
           float fade = 1.0 - smoothstep(60.0, 420.0, dC) * 0.75;
           e *= clamp(mask, 0.0, 1.0) * fade;
-          vec3 inkCol = mix(col * 0.22, uInk, 0.55);
+          // The rider (body 13, hair 14, skin 18, eye 19) is inked in warm dark brown.
+          float idC = floor(nC.z * 32.0 + 0.5);
+          float chr = (idC == 13.0 || idC == 14.0 || idC == 18.0 || idC == 19.0) ? 1.0 : 0.0;
+          vec3 inkCol = mix(mix(col * 0.22, uInk, 0.55), vec3(0.042, 0.023, 0.016), chr * 0.85);
           col = mix(col, inkCol, clamp(e, 0.0, 1.0) * 0.92);
           gl_FragColor = vec4(col, 1.0);
         }`,

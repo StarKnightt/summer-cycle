@@ -202,6 +202,8 @@ vec3 toonT(vec3 base, vec3 N, vec3 wpos, float jitter, float paint, float rimAmt
   float rim = smoothstep(0.58, 0.72, fr) * rimAmt;
   float sunSide = smoothstep(-0.3, 0.3, dot(N, uSunDir) + 0.2) * (0.3 + 0.7 * sv);
   col += uRimColor * base * rim * (0.2 + 0.8 * sunSide) * 0.8;
+  // Skin turning away from the camera takes one soft cel shade (far cheek in 3/4, jaw edges).
+  if (gSoftCast > 0.5) col = mix(col, cSh, smoothstep(0.5, 0.58, fr) * 0.7);
   col *= 1.0 + (br - 0.5) * 0.14 * paint;
   return min(col, vec3(0.97));
 }
@@ -604,7 +606,7 @@ void main(){
 
   // Skin shades warm (peach/rose) instead of the cool environment shadow.
   // Skin shades to a soft pink-lavender instead of the cool environment shadow.
-  vec3 shT = (HAS(7) && mt == 7) ? vec3(0.9, 0.75, 0.7) : uShadowTint;
+  vec3 shT = (HAS(7) && mt == 7) ? vec3(0.9, 0.75, 0.7) : (HAS(15) && mt == 15) ? vec3(0.42, 0.4, 0.38) : uShadowTint;
   if ((HAS(7) && mt == 7)) jit += 0.34;
   vec3 col = toonT(base, N, vWPos, jit, paint, rim, soft, shT) + emis;
   if ((HAS(26) && mt == 26) || (HAS(29) && mt == 29)) {

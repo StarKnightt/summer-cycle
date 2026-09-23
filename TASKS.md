@@ -20,10 +20,11 @@ The game is live on GitHub Pages (public repo StarKnightt/summer-cycle), the Ver
 
 - [x] Rename to Summer Cycle (title, loader, README, package name, audio lab)
 - [x] Character rebuild (`feature/face`): 20-year-old rider matching `refs/girl_model_sheet.png` + production refs — sculpted oval head with blunt rounded chin, warm-brown eyes, glasses, airy bangs, nape ponytail + scrunchie; healthy adult body (~7 heads, lofted torso, tapered limbs, hands, loafers); white blouse + dusty-blue midi skirt (seated drape); loader SVG girl to match. Tools: `scripts/face-shots.mjs`, `face-compare.py`. Shots: `shots/face/`
+- [x] Head pass 2 (`feature/face`): layered hair (27 thin tapered bang strands with gaps, 6 swaying side locks per side to the chin, sweep strands over the ears, nape wisps, radial-blended normals so the cel step is one smooth band), warm brown #3b2c26, thinner wrapped glasses with a nose-resting bridge, far-side skin shade, visible lid crease, bolder outer lash
 
 ## Found during the perf pass
 - [ ] GPU is often shared with other processes (user's Chrome ~79% 3D engine at times, other agents' headless Chromium): benchmark only when `nvidia-smi` is near idle; `scripts/perf.mjs` prints per-pass GPU ms to spot it
-- [ ] Global ink colour is near-black (`post.ts` uInk); production refs use warm brown ≈ #3A2A22 — worth a look in the critic pass (not changed in `feature/face`, affects the whole world)
+- [x] Character-only warm ink: outlines on rider ids (body/hair/skin/eye) tinted #3A2A22 in `post.ts`; world ink unchanged
 - [ ] Character FPS unconfirmed on an idle GPU (GPU at 99% from other processes during `feature/face`); rider cost vs master: same mesh count (283 vs 281), +15k tris
 - [x] `refs/girl_model_sheet.png` committed (character target); `refs/web/` + `scripts/_refgrab.mjs` gitignored
 
