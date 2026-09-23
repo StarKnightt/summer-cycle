@@ -515,7 +515,7 @@ void main(){
     paint = 0.12; rim = 0.3; soft = 0.05;
     if (mt == 24) emis = base * 0.28;
     // Dusk: lit panels (vending, phone) glow; painted shop signs catch a little lamplight.
-    gEmit = base * uNight * (mt == 24 ? 1.5 : 0.18);
+    gEmit = base * uNight * (mt == 24 ? 0.7 : 0.18);
   } else if (mt == 25) {    // plaster: rain streaks under the eaves, grime toward the ground
     vec2 tg = normalize(vec2(-N.z, N.x) + 1e-4);
     float sx = dot(vWPos.xz, tg);
@@ -525,7 +525,8 @@ void main(){
     paint = 0.7;
   } else if (mt == 14) {    // paper lantern (soft, never a lamp in daylight)
     emis = base * 0.18;
-    gEmit = mix(base, vec3(1.0, 0.62, 0.3), 0.5) * uNight * 2.4;
+    // Albedo-driven: paper lanterns bloom, dark shop interiors stay a warm dim glow.
+    gEmit = (base * 2.2 + vec3(0.26, 0.14, 0.05)) * uNight;
     paint = 0.3;
   } else if (mt == 15) {    // hair: strand highlights
     float s = vnoise(vec2(atan(vObj.x, vObj.z) * 9.0, vObj.y * 3.0));

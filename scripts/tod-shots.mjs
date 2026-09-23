@@ -66,6 +66,15 @@ try {
     await shot(page, "dusk_fireflies");
     await page.evaluate(() => window.__ride.setCam("tpp"));
   }
+  if (want("shoprow")) {
+    // Shop row (vending machines, phone box, signs) at dusk and at sunset.
+    for (const p of ["dusk", "sunset"]) {
+      await page.evaluate((pp) => { window.__ride.setTime(pp, true); window.__ride.place(0.3, -94, 0); window.__ride.setCam("houses"); }, p);
+      await sleep(900);
+      await shot(page, `${p}_shoprow`);
+    }
+    await page.evaluate(() => window.__ride.setCam("tpp"));
+  }
   if (want("mid")) {
     // Real key press: T from golden hour starts the transition to sunset.
     await page.evaluate(() => window.__ride.setTime("golden", true));
