@@ -24,12 +24,15 @@
  *   `braking` may be a boolean or a 0…1 brake pressure.
  *
  *   audio.ringBell();  audio.bump(0.8);  audio.toggleMute();  audio.setMasterVolume(0…1);
+ *   audio.footstep("asphalt" | "grass" | "dirt", 0…1.5);   // on foot (optional)
  *   audio.trigger("furin" | "temple" | "crossing" | "uguisu" | "kite" | "crow" | "frog" | "higurashi" | "minmin" | "bell" | "bump");
  * ────────────────────────────────────────────────────────────────────────────────────────────────
  */
 import { SoundEngine, type SoundEvent } from "./sound/engine";
+import type { StepSurface } from "./sound/steps";
 
 export type { SoundEvent } from "./sound/engine";
+export type { StepSurface } from "./sound/steps";
 
 export interface RideAudioExtras {
   steer?: number;
@@ -114,6 +117,11 @@ export class RideAudio {
   /** Basket/mudguard rattle, strength 0…1. */
   bump(strength = 0.6): void {
     if (this.ctx && this.engine) this.engine.bump(this.ctx.currentTime + 0.01, strength);
+  }
+
+  /** A footstep while walking: "asphalt" | "grass" | "dirt", strength 0…1.5 (jogging ≈ 1.2). */
+  footstep(surface: StepSurface, strength = 0.8): void {
+    if (this.ctx && this.engine) this.engine.footstep(this.ctx.currentTime + 0.005, surface, strength);
   }
 
   /** Fire a specific sound now (handy for cutscenes and testing). */

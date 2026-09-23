@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
-import { ID, M, beam, box, cyl, prep, sphere, xf } from "../world/geo";
+import { ID, M, beam, box, cyl, merge, prep, sphere, xf } from "../world/geo";
 import { uber } from "../render/materials";
 import { LAYER_SHADOW } from "../render/lightpasses";
 
@@ -17,6 +17,14 @@ const CRANK = 0.165;
 const HEAD_TOP = new THREE.Vector3(0, 0.98, -0.4);
 const HEAD_BOT = new THREE.Vector3(0, 0.74, -0.46);
 const SEAT = new THREE.Vector3(0, 0.9, 0.27);
+const KICK_PIVOT = new THREE.Vector3(-0.05, 0.31, 0.32);
+const KICK_LEN = 0.32;
+const KICK_FOLDED = new THREE.Vector3(-0.06, -0.06, 1).normalize();
+/** Deployed leg direction: reaches the ground with the bike leaning PARK_LEAN onto it. */
+const KICK_DOWN = new THREE.Vector3(-0.4, -0.9, 0.15).normalize();
+/** Parked roll (toward the kickstand, her left) and bar angle. */
+export const PARK_LEAN = 0.12;
+export const PARK_STEER = 0.32;
 
 const FRAME = "#c7353a";
 const CHROME = "#a3a8ae";
@@ -310,11 +318,137 @@ export interface RiderState {
   wheel: number;
   pedaling: number;
   time: number;
+  /** 0 folded … 1 kickstand down (parked). */
+  kick?: number;
+}
+
+/** On-foot animation input. The body lives under `walker` whenever blend > 0. */
+export interface FootState {
+  /** 0 seated on the bike … 1 standing / walking (raw transition time, staggered per limb inside). */
+  blend: number;
+  /** +1 she steps off / on at the bike's left, -1 at its right. */
+  side: number;
+  /** Ground speed (m/s), gait phase (radians, one stride per 2π), 0 walk … 1 run. */
+  speed: number;
+  phase: number;
+  run: number;
+  /** Yaw rate (rad/s) for leaning into turns. */
+  turn: number;
+  /** Idle head look-around (yaw, pitch offsets). */
+  look: number;
+  lookUp: number;
+  time: number;
+}
+
+/** Joint targets for one frame, in the body's parent frame (bike lean space or walker space). */
+interface Pose {
+  torsoP: THREE.Vector3;
+  torsoQ: THREE.Quaternion;
+  head: THREE.Vector3;
+  ponyX: number[];
+  ponyZ: number[];
+  hip: THREE.Vector3[];
+  ankle: THREE.Vector3[];
+  kneePole: THREE.Vector3[];
+  legL: number[];
+  footQ: THREE.Quaternion[];
+  wrist: THREE.Vector3[];
+  elbowPole: THREE.Vector3[];
+  armL: number[][];
+}
+
+const newPose = (): Pose => ({
+  torsoP: new THREE.Vector3(),
+  torsoQ: new THREE.Quaternion(),
+  head: new THREE.Vector3(),
+  ponyX: [0, 0, 0, 0],
+  ponyZ: [0, 0, 0, 0],
+  hip: [new THREE.Vector3(), new THREE.Vector3()],
+  ankle: [new THREE.Vector3(), new THREE.Vector3()],
+  kneePole: [new THREE.Vector3(), new THREE.Vector3()],
+  legL: [0.43, 0.42],
+  footQ: [new THREE.Quaternion(), new THREE.Quaternion()],
+  wrist: [new THREE.Vector3(), new THREE.Vector3()],
+  elbowPole: [new THREE.Vector3(), new THREE.Vector3()],
+  armL: [[0.27, 0.26], [0.27, 0.26]],
+});
+
+const SHOULDER = (side: number) => V(side * 0.165, 0.41, -0.01);
+/** Walking leg: thigh + shin (slightly shorter than the pedalling IK so she stands nearly straight). */
+const WALK_LEG = [0.41, 0.4];
+/** Gait: stance fraction and half step (m) for walk (0) … jog (1); cycle = ground covered per stride. */
+const gaitDuty = (run: number) => 0.55 - 0.17 * run;
+const gaitA = (run: number) => 0.3 + 0.08 * run;
+export const gaitCycle = (run: number) => (2 * gaitA(run)) / gaitDuty(run);
+const _e1 = new THREE.Euler();
+const frac = (x: number) => x - Math.floor(x);
+
+function blobShadow(w: number, d: number): THREE.Mesh {
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2),
+    new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      transparent: true,
+      depthWrite: false,
+      uniforms: {},
+      vertexShader: `out vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `in vec2 vUv; layout(location=0) out vec4 gColor; layout(location=1) out vec4 gNormal;
+        void main(){ vec2 d = (vUv - 0.5) * 2.0; float a = 1.0 - smoothstep(0.35, 1.0, length(d));
+          gColor = vec4(0.035, 0.035, 0.05, a * 0.42); gNormal = vec4(0.5, 1.0, 1.0/32.0, 0.0) * a; }`,
+    }),
+  );
+  shadow.position.y = 0.035;
+  shadow.renderOrder = 1;
+  return shadow;
+}
+
+/** Glasses lens: faint cool tint, a soft rim and a painted white glint (no refraction, no outline). */
+let lensMat: THREE.ShaderMaterial | null = null;
+function lensMaterial(): THREE.ShaderMaterial {
+  lensMat ??= new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms: {},
+    vertexShader: `out vec2 vUv; out vec3 vN; out vec3 vV;
+      void main(){ vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `in vec2 vUv; in vec3 vN; in vec3 vV; layout(location=0) out vec4 gColor; layout(location=1) out vec4 gNormal;
+      void main(){
+        vec2 p = (vUv - 0.5) * 2.0;
+        float r = length(p);
+        float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.0);
+        // Two parallel diagonal glint strokes in the upper-left, clipped to the lens.
+        vec2 q = mat2(0.7071, -0.7071, 0.7071, 0.7071) * (p - vec2(-0.3, 0.32));
+        float s1 = (1.0 - smoothstep(0.07, 0.11, abs(q.x))) * (1.0 - smoothstep(0.22, 0.3, abs(q.y)));
+        vec2 q2 = q - vec2(0.2, 0.0);
+        float s2 = (1.0 - smoothstep(0.025, 0.05, abs(q2.x))) * (1.0 - smoothstep(0.1, 0.16, abs(q2.y)));
+        float glint = max(s1, s2 * 0.85) * (1.0 - smoothstep(0.8, 0.92, r));
+        float a = 0.025 + 0.07 * smoothstep(0.6, 1.0, r) + 0.06 * fres;
+        vec3 tint = vec3(0.82, 0.92, 1.0);
+        vec3 col = mix(tint, vec3(1.0), glint);
+        gColor = vec4(col, clamp(a + glint * 0.35, 0.0, 0.6));
+        gNormal = vec4(0.0);
+      }`,
+  });
+  return lensMat;
 }
 
 export class Rider {
   readonly root = new THREE.Group();
   readonly lean = new THREE.Group();
+  /** On-foot root: her feet on the ground, facing -Z. Add to the scene next to `root`. */
+  readonly walker = new THREE.Group();
+  private kick = new THREE.Group();
+  private gripHands: THREE.Mesh[] = [];
+  private walkHands: THREE.Group[] = [];
+  private lenses: THREE.Mesh[] = [];
+  private walkShadow!: THREE.Mesh;
+  private onFoot = false;
+  private poseA = newPose();
+  private poseB = newPose();
+  private standK = 0;
   private steer = new THREE.Group();
   private frontWheel = wheel();
   private rearWheel = wheel();
@@ -327,6 +461,7 @@ export class Rider {
   private skirt!: THREE.Mesh;
   private skirtGeo!: THREE.BufferGeometry;
   private skirtWaist = new THREE.Vector3();
+  private waistNow = new THREE.Vector3();
   private thighA: THREE.Vector3[] = [];
   private thighB: THREE.Vector3[] = [];
   private thigh: Limb[] = [];
@@ -346,29 +481,22 @@ export class Rider {
     this.buildSteer();
     this.buildCrank();
     this.buildBody();
-    // Blob shadow under the bike.
-    const shadow = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.9, 1.9).rotateX(-Math.PI / 2),
-      new THREE.ShaderMaterial({
-        glslVersion: THREE.GLSL3,
-        transparent: true,
-        depthWrite: false,
-        uniforms: {},
-        vertexShader: `out vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-        fragmentShader: `in vec2 vUv; layout(location=0) out vec4 gColor; layout(location=1) out vec4 gNormal;
-          void main(){ vec2 d = (vUv - 0.5) * 2.0; float a = 1.0 - smoothstep(0.35, 1.0, length(d));
-            gColor = vec4(0.035, 0.035, 0.05, a * 0.42); gNormal = vec4(0.5, 1.0, 1.0/32.0, 0.0) * a; }`,
-      }),
-    );
-    shadow.position.y = 0.035;
-    shadow.renderOrder = 1;
-    this.root.add(shadow);
+    // Blob shadows under the bike and under her feet when she's walking.
+    this.root.add(blobShadow(0.9, 1.9));
+    this.walkShadow = blobShadow(0.75, 0.75);
+    this.walkShadow.visible = false;
+    this.walker.add(this.walkShadow);
   }
 
   private add(g: THREE.BufferGeometry, parent: THREE.Object3D = this.lean, id: number = ID.bike): THREE.Mesh {
     const m = mk(g, id);
     parent.add(m);
     return m;
+  }
+
+  private setKick(k: number): void {
+    const d = KICK_FOLDED.clone().lerp(KICK_DOWN, k * k * (3 - 2 * k)).normalize();
+    this.kick.quaternion.setFromUnitVectors(V(0, -1, 0), d);
   }
 
   private buildFrame(): void {
@@ -403,8 +531,12 @@ export class Rider {
     const guard = box(0.03, 0.14, 0.62, FRAME, M.metal);
     xf(guard, 0.09, 0.32, 0.28, 0.05);
     this.add(guard);
-    // Kickstand folded.
-    this.add(beam(V(0.06, 0.3, 0.5), V(0.06, 0.18, 0.72), 0.01, CHROME, M.metal, 4));
+    // Side kickstand on the left chainstay: folded along the stay, swings down when parked.
+    this.kick.position.copy(KICK_PIVOT);
+    this.lean.add(this.kick);
+    this.add(beam(V(0, 0, 0), V(0, -KICK_LEN, 0), 0.011, CHROME, M.metal, 5, 0.009), this.kick);
+    this.add(xf(box(0.035, 0.012, 0.05, "#8d9094", M.metal), 0, -KICK_LEN, 0), this.kick);
+    this.setKick(0);
     this.rearWheel.position.copy(REAR);
     this.lean.add(this.rearWheel);
   }
@@ -527,7 +659,7 @@ export class Rider {
       parts.push(thumb.translate(G.x - side * 0.04, G.y + 0.016, G.z - 0.015));
       const W = V(side * 0.012, 0.026, 0.034).add(G);
       parts.push(xf(sphere(0.021, SKIN, M.skin, 10, 6), W.x, W.y, W.z));
-      for (const g of parts) this.add(g.translate(-HEAD_BOT.x, -HEAD_BOT.y, -HEAD_BOT.z), this.steer, ID.skin);
+      for (const g of parts) this.gripHands.push(this.add(g.translate(-HEAD_BOT.x, -HEAD_BOT.y, -HEAD_BOT.z), this.steer, ID.skin));
       this.wrists.push(W.sub(HEAD_BOT));
     }
   }
@@ -629,6 +761,7 @@ export class Rider {
     this.skirtGeo = g;
     // Waist ring at the blouse band: high enough that the thigh tops never rise above the hem line.
     this.skirtWaist.copy(hip).add(V(0, 0.005, 0.0));
+    this.waistNow.copy(this.skirtWaist);
     this.skirt = new THREE.Mesh(g, uber(rid, 1, THREE.DoubleSide));
     this.skirt.frustumCulled = false;
     b.add(this.skirt);
@@ -706,8 +839,8 @@ export class Rider {
     this.add(xf(knot, knotP.x, knotP.y, knotP.z, -0.12), tp, ID.flower);
 
     // Neck + head (head scaled up so the face reads from the chase cam).
-    this.add(xf(cyl(0.04, 0.047, 0.2, SKIN, M.skin, 10), 0, 0.56, 0), tp, ID.skin);
-    this.head.position.set(0, 0.725, -0.012);
+    this.add(xf(cyl(0.043, 0.05, 0.2, SKIN, M.skin, 10), 0, 0.55, 0), tp, ID.skin);
+    this.head.position.set(0, 0.705, -0.012);
     this.head.scale.setScalar(HEAD_SCALE);
     tp.add(this.head);
     const face = new THREE.SphereGeometry(1, 36, 24);
@@ -761,6 +894,93 @@ export class Rider {
     mouth.translate(0, 0.015, 0);
     mouth.scale(1, 1, 0.5);
     this.onHead(mouth, 0, -0.45, 0.001, ID.skin);
+    this.buildGlasses();
+  }
+
+  /**
+   * Round thin-frame glasses: two rims floating just clear of the face (fitted numerically against
+   * the head surface), a keyhole bridge, hinges and temples that tuck under the hair toward the ears.
+   */
+  private buildGlasses(): void {
+    const FR = "#1e120d";
+    const R = 0.034, TUBE = 0.0021, CLEAR = 0.009;
+    const parts: THREE.BufferGeometry[] = [];
+    const inner: THREE.Vector3[] = [], hinge: THREE.Vector3[] = [], lensN: THREE.Vector3[] = [];
+    const clearance = (q: THREE.Vector3) => q.length() - faceR(q.clone().normalize());
+    for (const s of [-1, 1]) {
+      const d = dirOf(s * 0.335, -0.03);
+      const n = dirOf(s * 0.14, 0.03);
+      const ex = V(0, 1, 0).cross(n).normalize(); // ≈ -X
+      const ey = n.clone().cross(ex).normalize();
+      const C = d.clone().multiplyScalar(faceR(d));
+      for (let it = 0; it < 8; it++) {
+        // The whole lens disc (centre, mid ring, rim) must float clear of the eye and lashes.
+        let minC = clearance(C);
+        for (const rr of [0.5 * R, R + TUBE])
+          for (let k = 0; k < 32; k++) {
+            const a = (k / 32) * Math.PI * 2;
+            const q = C.clone().addScaledVector(ex, Math.cos(a) * rr).addScaledVector(ey, Math.sin(a) * rr);
+            minC = Math.min(minC, clearance(q));
+          }
+        if (minC >= CLEAR - 1e-4) break;
+        C.addScaledVector(n, CLEAR - minC);
+      }
+      const basis = new THREE.Matrix4().makeBasis(ex, ey, n).setPosition(C);
+      parts.push(prep(new THREE.TorusGeometry(R, TUBE, 5, 40), FR, M.plain).applyMatrix4(basis));
+      const lens = new THREE.Mesh(new THREE.CircleGeometry(R, 32).applyMatrix4(basis), lensMaterial());
+      lens.renderOrder = 2;
+      this.head.add(lens);
+      this.lenses.push(lens);
+      // Painted glint: two slanted strokes, upper-left as seen from the front; unshaded + un-inked
+      // (the "distant" material path) so they stay crisp white over the eye's own lines.
+      const strokes: THREE.BufferGeometry[] = [];
+      for (const [cx, cy, len, w] of [[-0.3, 0.28, 0.9, 0.25], [0.17, 0.0, 0.5, 0.12]]) {
+        const ax = 0.7071 * (len / 2) * R, ay = 0.7071 * (len / 2) * R;
+        const px = -0.7071 * (w / 2) * R, py = 0.7071 * (w / 2) * R;
+        const c0 = V(cx * R, cy * R, 0.0012);
+        const pts = [
+          c0.clone().add(V(-ax, -ay, 0)),
+          c0.clone().add(V(-ax * 0.6 + px, -ay * 0.6 + py, 0)),
+          c0.clone().add(V(ax * 0.6 + px, ay * 0.6 + py, 0)),
+          c0.clone().add(V(ax, ay, 0)),
+          c0.clone().add(V(ax * 0.6 - px, ay * 0.6 - py, 0)),
+          c0.clone().add(V(-ax * 0.6 - px, -ay * 0.6 - py, 0)),
+        ];
+        const g = new THREE.BufferGeometry().setFromPoints(pts);
+        g.setIndex([0, 2, 1, 0, 3, 2, 0, 4, 3, 0, 5, 4]);
+        g.setAttribute("normal", new THREE.Float32BufferAttribute(new Array(6).fill([0, 0, 1]).flat(), 3));
+        strokes.push(prep(g, "#ffffff", M.distant).applyMatrix4(basis));
+      }
+      const glint = new THREE.Mesh(merge(strokes), uber(ID.eye, -1, THREE.DoubleSide));
+      this.head.add(glint);
+      this.lenses.push(glint);
+      // ex points toward -X, so the inner (nose-side) edge of rim s is along +s·ex.
+      inner.push(C.clone().addScaledVector(ex, s * R));
+      hinge.push(C.clone().addScaledVector(ex, -s * R));
+      lensN.push(n);
+    }
+    // Bridge: a small arch over the nose.
+    const [iA, iB] = inner;
+    const top = iA.clone().add(iB).multiplyScalar(0.5).add(V(0, 0.012, -0.004));
+    const q = (t: number) => iA.clone().multiplyScalar((1 - t) ** 2).addScaledVector(top, 2 * t * (1 - t)).addScaledVector(iB, t * t);
+    for (let k = 0; k < 6; k++) parts.push(beam(q(k / 6), q((k + 1) / 6), TUBE * 0.9, FR, M.plain, 5));
+    // Hinges + temples running back along the side of the head just above the skin, under the hair.
+    hinge.forEach((h, i) => {
+      const s = i === 0 ? -1 : 1;
+      parts.push(xf(sphere(TUBE * 1.9, FR, M.plain, 6, 4), h.x, h.y, h.z));
+      let prev = h.clone().addScaledVector(lensN[i], -0.003);
+      parts.push(beam(h, prev, TUBE * 1.2, FR, M.plain, 5));
+      for (let k = 0; k <= 6; k++) {
+        const az = s * (0.8 + (k / 6) * 0.85);
+        const dd = dirOf(az, -0.02 - k * 0.012);
+        const p = dd.clone().multiplyScalar(faceR(dd) + 0.0045);
+        parts.push(beam(prev, p, TUBE * 0.9, FR, M.plain, 5));
+        prev = p;
+      }
+    });
+    // The dark frame is its own ink line: excluded from the outline pass so it never doubles up.
+    const frames = new THREE.Mesh(merge(parts), uber(ID.eye, -1));
+    this.head.add(frames);
   }
 
   /**
@@ -872,18 +1092,47 @@ export class Rider {
       this.elbows.push(elbow);
       this.feet.push(foot);
     }
+    // Relaxed hands for walking (the riding hands are modelled on the grips): local -Y runs down the
+    // fingers, the palm faces her thigh.
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? 1 : -1;
+      const hand = new THREE.Group();
+      const parts: THREE.BufferGeometry[] = [];
+      parts.push(xf(sphere(0.021, SKIN, M.skin, 10, 6), 0, 0, 0));
+      const palm = sphere(1, SKIN, M.skin, 14, 10);
+      palm.scale(0.019, 0.04, 0.032);
+      parts.push(palm.translate(0, -0.038, 0));
+      const fingers = sphere(1, SKIN, M.skin, 12, 8);
+      fingers.scale(0.016, 0.03, 0.028);
+      fingers.rotateX(-0.25);
+      parts.push(fingers.translate(-side * 0.005, -0.076, -0.004));
+      const thumb = sphere(1, SKIN, M.skin, 10, 6);
+      thumb.scale(0.012, 0.024, 0.012);
+      thumb.rotateX(0.35);
+      parts.push(thumb.translate(-side * 0.008, -0.04, -0.03));
+      for (const g of parts) this.add(g, hand, ID.skin);
+      hand.visible = false;
+      b.add(hand);
+      this.walkHands.push(hand);
+    }
   }
 
   /** Recompute skirt vertices: pleated A-line that lies on the thighs in front, hangs behind. */
-  private drapeSkirt(speed: number, time: number): void {
+  /**
+   * `stand` 0 = seated drape, 1 = hanging straight while standing/walking; `gait` = [move 0..1,
+   * stride phase, run 0..1] for the walking sway (hem trails back and swings with the hips).
+   */
+  private drapeSkirt(speed: number, time: number, stand = 0, gait: number[] = [0, 0, 0]): void {
     const g = this.skirtGeo;
     const p = g.attributes.position as THREE.BufferAttribute;
     const cols = SKIRT_N * 2;
     const rings = 4;
-    const W = this.skirtWaist;
-    const sp = Math.min(speed / 8, 1.3);
+    const W = this.waistNow;
+    const [mv, ph, run] = gait;
+    const sp = stand > 0 ? Math.min(1.3, (0.25 * mv + 0.55 * run) * stand + (Math.min(speed / 8, 1.3)) * (1 - stand)) : Math.min(speed / 8, 1.3);
     const fwd = V(0, -0.4, -1).normalize();
     const back = V(0, -1, 0.3).normalize();
+    const down = V(0, -1, 0);
     const d = new THREE.Vector3();
     for (let j = 0; j < rings; j++) {
       const t = j / (rings - 1);
@@ -891,23 +1140,38 @@ export class Rider {
         const a = (i / cols) * Math.PI * 2;
         const rx = Math.sin(a), rz = Math.cos(a);
         const f = (1 - rz) / 2; // 0 back, 1 front
-        d.copy(back).lerp(fwd, f).normalize();
+        d.copy(back).lerp(fwd, f).normalize().lerp(down, stand).normalize();
         const pleat = i % 2 ? 0.84 : 1.0;
         const rWaist = 0.15;
-        const flare = 0.13 * pleat;
+        const flare = 0.13 * pleat * (1 - 0.25 * stand);
         const rad = rWaist * (1 - t) + (rWaist + flare) * t;
-        const len = 0.31 * (f > 0.6 ? 0.9 : 1.0);
+        const len = 0.31 * (f > 0.6 ? 0.9 : 1.0) * (1 - stand) + 0.335 * stand;
         const flut = Math.sin(time * 9 + a * 3 + j) * 0.012 * sp * t * t;
-        const drift = 0.05 * sp * t * t * (1 - f);
+        const drift = 0.05 * sp * t * t * (1 - f) * (1 - stand) + (0.035 * mv + 0.05 * run) * t * t * stand;
+        const swing = Math.sin(ph) * 0.014 * mv * t * t * stand;
         const k = j * (cols + 1) + i;
         _sp.set(
-          W.x + rx * rad * 1.12 + rx * flut,
+          W.x + rx * rad * 1.12 + rx * flut + swing,
           W.y + d.y * len * t + flut * 0.6,
           W.z + rz * rad * 0.9 + d.z * len * t + drift,
         );
+        // Standing: push the cloth radially off the thighs (a stepping knee nudges the hem forward,
+        // never lifts it).
+        if (j > 0 && stand > 0.5)
+          for (let l = 0; l < this.thighA.length; l++) {
+            const A = this.thighA[l], B = this.thighB[l];
+            _sr.subVectors(B, A);
+            const u = Math.min(1, Math.max(0, _sq.subVectors(_sp, A).dot(_sr) / (_sr.lengthSq() + 1e-6)));
+            _sr.multiplyScalar(u).add(A);
+            _sq.subVectors(_sp, _sr);
+            _sq.y = 0;
+            const lat = _sq.length();
+            const R = 0.088;
+            if (lat < R && lat > 1e-5) _sp.addScaledVector(_sq, (R - lat) / lat);
+          }
         // Keep the cloth outside both thighs (the knee rises through the hem at the top of the stroke).
         // Front half only lifts (never tucks under the leg); the lift fades toward the sides.
-        if (j > 0 && f > 0.3)
+        if (j > 0 && f > 0.3 && stand <= 0.5)
           for (let l = 0; l < this.thighA.length; l++) {
             const A = this.thighA[l], B = this.thighB[l];
             const ax = B.x - A.x, az = B.z - A.z;
@@ -960,69 +1224,244 @@ export class Rider {
     return out.set(0, -0.003, -0.061).applyMatrix4(this.head.matrixWorld);
   }
 
-  update(dt: number, s: RiderState): void {
+  /** World-space point at the middle of her head (orbit-camera pivot). */
+  headWorld(out: THREE.Vector3): THREE.Vector3 {
+    this.head.updateWorldMatrix(true, false);
+    return out.set(0, 0, 0).applyMatrix4(this.head.matrixWorld);
+  }
+
+  update(dt: number, s: RiderState, f?: FootState): void {
     this.lean.rotation.z = s.lean;
     this.steer.setRotationFromAxisAngle(this.steerAxis, s.steer);
     this.frontWheel.rotation.x = -s.wheel;
     this.rearWheel.rotation.x = -s.wheel;
     this.crank.rotation.x = -s.crank;
     for (const p of this.pedals) p.rotation.x = s.crank; // keep pedals level
+    this.setKick(s.kick ?? 0);
+    const fb = f ? Math.min(1, Math.max(0, f.blend)) : 0;
+    this.setOnFoot(fb > 0);
+    this.root.updateMatrixWorld(true);
+    const P = this.poseA;
+    this.ridePose(s, P);
+    let stand = 0;
+    let gait = [0, 0, 0];
+    if (f && fb > 0) {
+      // Ride pose → walker space, then blend limb by limb: the stand-side foot goes down first, the
+      // body slides off the saddle, and the far foot steps through the low frame last.
+      this.walker.updateMatrixWorld(true);
+      const M = _m1.copy(this.walker.matrixWorld).invert().multiply(this.lean.matrixWorld);
+      _q1.setFromRotationMatrix(M);
+      P.torsoP.applyMatrix4(M);
+      P.torsoQ.premultiply(_q1);
+      for (let i = 0; i < 2; i++) {
+        P.hip[i].applyMatrix4(M);
+        P.ankle[i].applyMatrix4(M);
+        P.wrist[i].applyMatrix4(M);
+        P.kneePole[i].transformDirection(M);
+        P.elbowPole[i].transformDirection(M);
+        P.footQ[i].premultiply(_q1);
+      }
+      const W = this.poseB;
+      this.walkPose(f, W);
+      const near = f.side > 0 ? 1 : 0;
+      const wNear = smooth(0, 0.45, fb), wFar = smooth(0.35, 1, fb), wBody = smooth(0.12, 0.82, fb), wArm = smooth(0.05, 0.62, fb);
+      P.torsoP.lerp(W.torsoP, wBody);
+      P.torsoQ.slerp(W.torsoQ, wBody);
+      P.head.lerp(W.head, wBody);
+      for (let i = 0; i < P.ponyX.length; i++) {
+        P.ponyX[i] += (W.ponyX[i] - P.ponyX[i]) * wBody;
+        P.ponyZ[i] += (W.ponyZ[i] - P.ponyZ[i]) * wBody;
+      }
+      for (let k = 0; k < 2; k++) P.legL[k] += (W.legL[k] - P.legL[k]) * wBody;
+      for (let i = 0; i < 2; i++) {
+        const w = i === near ? wNear : wFar;
+        P.hip[i].lerp(W.hip[i], wBody);
+        if (i === near || w <= 0 || w >= 1) {
+          P.ankle[i].lerp(W.ankle[i], w);
+          if (i === near) P.ankle[i].y += Math.sin(Math.PI * w) * 0.05;
+        } else {
+          // Arc up through the step-through frame.
+          _v1.copy(P.ankle[i]).add(W.ankle[i]).multiplyScalar(0.5);
+          _v1.y += 0.62;
+          _v1.z -= 0.12;
+          _v2.copy(P.ankle[i]);
+          P.ankle[i].copy(_v2.multiplyScalar((1 - w) * (1 - w))).addScaledVector(_v1, 2 * w * (1 - w)).addScaledVector(W.ankle[i], w * w);
+        }
+        P.kneePole[i].lerp(W.kneePole[i], w).normalize();
+        P.footQ[i].slerp(W.footQ[i], w);
+        P.wrist[i].lerp(W.wrist[i], wArm);
+        P.elbowPole[i].lerp(W.elbowPole[i], wArm).normalize();
+        for (let k = 0; k < 2; k++) P.armL[i][k] += (W.armL[i][k] - P.armL[i][k]) * wArm;
+      }
+      stand = wBody;
+      gait = [Math.min(1, f.speed / 1.1), f.phase, f.run];
+      this.waistNow.copy(P.torsoP).add(_v1.set(0, 0.005, 0));
+    } else this.waistNow.copy(this.skirtWaist);
+    this.standK = stand;
+    this.applyPose(P, fb === 0 && this.fppOn);
+    this.seatCover.visible = fb === 0;
+    for (const l of this.lenses) l.layers.mask = this.fppOn ? 0 : 1;
+    this.drapeSkirt(f && fb > 0 ? f.speed : s.speed, s.time, stand, gait);
+    void dt;
+  }
 
+  /** 0 seated … 1 standing (how far the dismount has got). */
+  get standing(): number {
+    return this.standK;
+  }
+
+  /** Move the body between the bike (lean space) and the walker root. */
+  private setOnFoot(on: boolean): void {
+    if (on === this.onFoot) return;
+    this.onFoot = on;
+    (on ? this.walker : this.lean).add(this.body);
+    for (const h of this.gripHands) h.visible = !on;
+    for (const h of this.walkHands) h.visible = on;
+    this.walkShadow.visible = on;
+  }
+
+  /** Seated pedalling pose in lean space (the original riding animation). */
+  private ridePose(s: RiderState, P: Pose): void {
     const bob = Math.sin(s.crank * 2) * 0.008 * s.pedaling;
-    this.torso.position.y = SEAT.y + 0.1 + bob;
-    this.torso.rotation.z = Math.sin(s.crank) * 0.025 * s.pedaling;
-    this.torso.rotation.x = -0.28 - Math.min(s.speed / 12, 1) * 0.08;
-    this.head.rotation.y = Math.sin(s.time * 0.37) * 0.12 + Math.sin(s.time * 0.13) * 0.1;
-    this.head.rotation.x = 0.14 + Math.sin(s.time * 0.21) * 0.04;
-    this.head.rotation.z = -s.lean * 0.5;
+    P.torsoP.set(0, SEAT.y + 0.1 + bob, SEAT.z - 0.02);
+    P.torsoQ.setFromEuler(_e1.set(-0.28 - Math.min(s.speed / 12, 1) * 0.08, 0, Math.sin(s.crank) * 0.025 * s.pedaling, "XYZ"));
+    P.head.set(0.14 + Math.sin(s.time * 0.21) * 0.04, Math.sin(s.time * 0.37) * 0.12 + Math.sin(s.time * 0.13) * 0.1, -s.lean * 0.5);
     const sp = Math.min(s.speed / 8, 1.2);
     // Low ponytail: hangs from the nape (undoing the head nod so it stays off her back), wind
     // lifts it slightly with speed, and a travelling wave sways it.
-    for (let i = 0; i < this.pony.length; i++) {
-      const p = this.pony[i];
+    for (let i = 0; i < P.ponyX.length; i++) {
       const wave = Math.sin(s.time * 3.6 - i * 0.9) * 0.07 * (0.4 + sp);
-      p.rotation.x = (i === 0 ? -this.head.rotation.x - 0.22 - sp * 0.22 : -0.05 - sp * 0.08) + wave;
-      p.rotation.z = Math.sin(s.time * 2.4 - i * 1.1) * 0.09 * (0.4 + sp) + (i === 0 ? s.steer * 0.3 + s.lean * 0.35 : 0);
+      P.ponyX[i] = (i === 0 ? -P.head.x - 0.22 - sp * 0.22 : -0.05 - sp * 0.08) + wave;
+      P.ponyZ[i] = Math.sin(s.time * 2.4 - i * 1.1) * 0.09 * (0.4 + sp) + (i === 0 ? s.steer * 0.3 + s.lean * 0.35 : 0);
     }
-    this.root.updateMatrixWorld(true);
-    const bodyInv = new THREE.Matrix4().copy(this.body.matrixWorld).invert();
-    const toBody = (o: THREE.Object3D, v: THREE.Vector3) => v.applyMatrix4(o.matrixWorld).applyMatrix4(bodyInv);
-
     // Hip joints sit just under the skirt's waist ring so the open thigh tube never shows above it.
-    const hipBase = V(0, SEAT.y + 0.035, SEAT.z - 0.03);
-    const mid = new THREE.Vector3();
+    const hipBase = _v2.set(0, SEAT.y + 0.035, SEAT.z - 0.03);
+    P.legL[0] = 0.43;
+    P.legL[1] = 0.42;
     for (let i = 0; i < 2; i++) {
       const side = i === 0 ? 1 : -1;
       const a = s.crank + (i === 0 ? 0 : Math.PI);
-      const pedal = V(side * 0.14, BB.y - Math.cos(a) * CRANK, BB.z + Math.sin(a) * CRANK);
-      const ankle = pedal.clone().add(V(0, 0.06, 0.03));
-      const hip = hipBase.clone().add(V(side * 0.085, 0, 0));
-      ik(hip, ankle, 0.43, 0.42, V(side * 0.12, 0.4, -1).normalize(), mid);
+      P.ankle[i].set(side * 0.14, BB.y - Math.cos(a) * CRANK + 0.06, BB.z + Math.sin(a) * CRANK + 0.03);
+      P.hip[i].copy(hipBase).add(_v1.set(side * 0.085, 0, 0));
+      P.kneePole[i].set(side * 0.12, 0.4, -1).normalize();
+      P.footQ[i].setFromEuler(_e1.set(-0.15 + Math.sin(a) * 0.25, 0, 0, "XYZ"));
+      const shoulder = SHOULDER(side).applyQuaternion(P.torsoQ).add(P.torsoP);
+      P.wrist[i].copy(this.wrists[i]).applyMatrix4(this.steer.matrix);
+      // Segment lengths follow the reach so the elbow always keeps a relaxed ~18° bend.
+      const reach = shoulder.distanceTo(P.wrist[i]) / (2 * Math.cos((9 * Math.PI) / 180));
+      P.armL[i][0] = reach * 1.04;
+      P.armL[i][1] = reach * 0.96;
+      P.elbowPole[i].set(side * 0.45, -0.8, 0.45).normalize();
+    }
+  }
+
+  /** Standing / walking / jogging pose in walker space (feet on y = 0, facing -Z). */
+  private walkPose(f: FootState, P: Pose): void {
+    const mv = Math.min(1, f.speed / 1.1), run = f.run, ph = f.phase, t = f.time;
+    const duty = gaitDuty(run);
+    const A = gaitA(run) * mv;
+    const lift = (0.07 + 0.1 * run) * mv;
+    const legSum = WALK_LEG[0] + WALK_LEG[1];
+    const reach = legSum * (0.99 - 0.05 * run);
+    let hj = 0.07 + legSum * 0.99;
+    const sPh = [0, 0];
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? 1 : -1;
+      const s = frac(ph / (Math.PI * 2) + (i === 0 ? 0 : 0.5));
+      sPh[i] = s;
+      let z: number, y: number, rot: number;
+      if (s < duty) {
+        const u = s / duty;
+        z = -A + 2 * A * u;
+        y = 0.035 * smooth(0.72, 1, u) * mv;
+        rot = (0.22 * (1 - smooth(0, 0.18, u)) - 0.5 * smooth(0.7, 1, u)) * mv;
+      } else {
+        const u = (s - duty) / (1 - duty);
+        const e = u * u * (3 - 2 * u);
+        z = A - 2 * A * e + 0.13 * run * mv * Math.sin(Math.PI * u);
+        y = lift * Math.sin(Math.PI * u) + 0.035 * (1 - smooth(0, 0.3, u)) * mv;
+        rot = (-0.5 + 0.72 * e) * mv;
+      }
+      // Idle: right foot a touch forward, toes slightly in.
+      z += (i === 0 ? -0.05 : 0.02) * (1 - mv);
+      P.ankle[i].set(side * (0.09 - 0.015 * run), 0.07 + y, z);
+      P.footQ[i].setFromEuler(_e1.set(rot, side * 0.14 * (1 - mv), 0, "YXZ"));
+      const dx = P.ankle[i].x - side * 0.085;
+      hj = Math.min(hj, P.ankle[i].y + Math.sqrt(Math.max(0, reach * reach - z * z - dx * dx)));
+    }
+    const breath = Math.sin(t * 1.8) * 0.0035 * (1 - mv);
+    const pitch = -(0.02 + 0.035 * mv + 0.13 * run);
+    const yaw = -0.07 * mv * Math.cos(ph) * (1 - 0.3 * run);
+    const roll = -0.015 * mv * Math.cos(ph - 1.9) - Math.max(-0.1, Math.min(0.1, f.turn * f.speed * 0.03));
+    P.torsoP.set(0.012 * mv * Math.cos(ph - 1.9), hj + 0.065 + breath + 0.015 * run * mv, 0);
+    P.torsoQ.setFromEuler(_e1.set(pitch, yaw, roll, "YXZ"));
+    P.head.set(-pitch * 0.8 - 0.03 + f.lookUp, f.look - yaw * 0.8, -roll * 0.6 + 0.035 * Math.sin(t * 0.31) * (1 - mv));
+    for (let i = 0; i < P.ponyX.length; i++) {
+      const wave = Math.sin(2 * ph - i * 0.9) * 0.05 * mv + Math.sin(t * 1.4 - i * 0.8) * 0.025;
+      P.ponyX[i] = (i === 0 ? -(pitch + P.head.x) - 0.14 - 0.08 * mv - 0.12 * run : -0.03 - 0.05 * run) + wave;
+      P.ponyZ[i] = Math.sin(ph - i * 0.8) * 0.06 * mv + Math.sin(t * 1.9 - i * 1.1) * 0.03;
+    }
+    P.legL[0] = WALK_LEG[0];
+    P.legL[1] = WALK_LEG[1];
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? 1 : -1;
+      P.hip[i].copy(P.torsoP).add(_v1.set(side * 0.085, -0.065, 0));
+      P.kneePole[i].set(side * 0.08, 0.05, -1).normalize();
+      const shoulder = SHOULDER(side).applyQuaternion(P.torsoQ).add(P.torsoP);
+      // Arms swing opposite to the same-side leg; jogging bends the elbows and pumps.
+      const k = mv * (0.15 + 0.05 * run);
+      const armZ = k * Math.cos(2 * Math.PI * sPh[i]);
+      const walkW = _v1.set(side * 0.075, -0.495 + Math.max(0, -armZ) * 0.25, 0.035 + armZ);
+      const runW = _v2.set(side * 0.01, -0.3, -0.08 + armZ * 1.3);
+      P.wrist[i].copy(walkW).lerp(runW, run).add(shoulder);
+      P.elbowPole[i].set(side * (0.3 + 0.2 * run), -0.2 * run, 1).normalize();
+      P.armL[i][0] = 0.27;
+      P.armL[i][1] = 0.255;
+    }
+  }
+
+  private applyPose(P: Pose, fppForearm: boolean): void {
+    this.torso.position.copy(P.torsoP);
+    this.torso.quaternion.copy(P.torsoQ);
+    this.head.rotation.set(P.head.x, P.head.y, P.head.z);
+    for (let i = 0; i < this.pony.length; i++) {
+      this.pony[i].rotation.x = P.ponyX[i];
+      this.pony[i].rotation.z = P.ponyZ[i];
+    }
+    const mid = _v3;
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? 1 : -1;
+      const hip = P.hip[i], ankle = P.ankle[i];
+      ik(hip, ankle, P.legL[0], P.legL[1], P.kneePole[i], mid);
       this.thigh[i].set(hip, mid);
       (this.thighA[i] ??= new THREE.Vector3()).copy(hip);
       (this.thighB[i] ??= new THREE.Vector3()).copy(mid);
       this.shin[i].set(mid, ankle);
       this.knees[i].position.copy(mid);
-      this.feet[i].position.copy(ankle).add(V(0, -0.03, 0));
-      this.feet[i].rotation.x = -0.15 + Math.sin(a) * 0.25;
+      this.feet[i].position.copy(ankle).add(_v1.set(0, -0.03, 0));
+      this.feet[i].quaternion.copy(P.footQ[i]);
 
-      const shoulder = toBody(this.torso, V(side * 0.165, 0.41, -0.01));
-      const wrist = toBody(this.steer, this.wrists[i].clone());
-      // Segment lengths follow the reach so the elbow always keeps a relaxed ~18° bend.
-      const reach = shoulder.distanceTo(wrist) / (2 * Math.cos((9 * Math.PI) / 180));
-      ik(shoulder, wrist, reach * 1.04, reach * 0.96, V(side * 0.45, -0.8, 0.45).normalize(), mid);
+      const shoulder = SHOULDER(side).applyQuaternion(P.torsoQ).add(P.torsoP);
+      const wrist = P.wrist[i];
+      ik(shoulder, wrist, P.armL[i][0], P.armL[i][1], P.elbowPole[i], mid);
       this.upperArm[i].set(shoulder, mid);
       // First person: the elbow is hidden, so run the forearm on past the near plane (no cut end).
-      if (this.fppOn) this.foreArm[i].set(mid.clone().lerp(wrist, -1.2), wrist);
+      if (fppForearm) this.foreArm[i].set(mid.clone().lerp(wrist, -1.2), wrist);
       else this.foreArm[i].set(mid, wrist);
       this.elbows[i].position.copy(mid);
+      const hand = this.walkHands[i];
+      if (hand.visible) {
+        hand.position.copy(wrist);
+        hand.quaternion.setFromUnitVectors(_v1.set(0, -1, 0), _v2.subVectors(wrist, mid).normalize());
+      }
     }
-    this.drapeSkirt(s.speed, s.time);
-    void dt;
   }
 }
 
 const SKIRT_N = 14;
-const _sp = new THREE.Vector3(), _sr = new THREE.Vector3();
+const _sp = new THREE.Vector3(), _sr = new THREE.Vector3(), _sq = new THREE.Vector3();
+const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _m1 = new THREE.Matrix4();
+const _q1 = new THREE.Quaternion();
 
 export const BIKE = { WHEEL_R, WHEELBASE: FRONT.distanceTo(REAR) };

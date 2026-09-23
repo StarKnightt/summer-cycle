@@ -8,6 +8,7 @@ import { L, roadX, roadYaw } from "./world/road";
 import { Rider } from "./rider/rider";
 import { Controller } from "./rider/controller";
 import { ChaseCam, type CamMode } from "./rider/camera";
+import { Explore, houseAt } from "./rider/onfoot";
 import { Input } from "./core/input";
 import { RideAudio } from "./audio";
 import { Loader, type Stage } from "./loader";
@@ -69,6 +70,7 @@ scene.add(sky.motes);
 const rider = await step("rider", "rider", W_RIDER, () => new Rider());
 onLayers(rider.lean, LAYER_SHADOW, LAYER_REFLECT);
 scene.add(rider.root);
+scene.add(rider.walker);
 
 const shadow = new SunShadow(2048, 55);
 const reflection = new PaddyReflection(Math.floor(innerWidth * 0.5), Math.floor(innerHeight * 0.5));
@@ -105,13 +107,17 @@ let msaaStepAt = 0;
 const audio = new RideAudio();
 const input = new Input(
   () => audio.start(),
-  () => chase.toggle(),
+  () => {
+    if (!explore.onFoot) chase.toggle();
+  },
 );
 // B = bicycle bell, M = mute (both also count as the first gesture that starts audio).
 audio.bindKeys();
 
 const hud = document.getElementById("hud")!;
 if (AUTOPLAY || params.has("nohud")) hud.style.display = "none";
+// F = get off and explore on foot / get back on; C = cinematic ride cameras.
+const explore = new Explore(world, rider, ctl, chase, audio, renderer.domElement, !(AUTOPLAY || params.has("nohud")));
 
 addEventListener("resize", () => {
   renderer.setSize(innerWidth, innerHeight);
@@ -164,38 +170,51 @@ function frame(now: number) {
   t += dt;
   G.uTime.value = t;
 
-  // Sub-step so a frame hitch can never tunnel the bike through a thin obstacle.
-  const steps = Math.max(1, Math.ceil((Math.abs(ctl.speed) * dt) / 0.15));
-  let bumpMax = 0;
-  for (let i = 0; i < steps; i++) {
-    ctl.update(dt / steps, input, bikeContact);
-    bumpMax = Math.max(bumpMax, ctl.bumpImpulse);
-  }
-  ctl.bumpImpulse = bumpMax;
-  if (ctl.z < -L) {
+  if (explore.bikeActive) {
+    // Sub-step so a frame hitch can never tunnel the bike through a thin obstacle.
+    const steps = Math.max(1, Math.ceil((Math.abs(ctl.speed) * dt) / 0.15));
+    let bumpMax = 0;
+    for (let i = 0; i < steps; i++) {
+      ctl.update(dt / steps, input, bikeContact);
+      bumpMax = Math.max(bumpMax, ctl.bumpImpulse);
+    }
+    ctl.bumpImpulse = bumpMax;
+  } else ctl.bumpImpulse = 0;
+  explore.update(dt, input, t);
+  // Streaming (and the periodic wrap) follows whoever is active: the bike, or her on foot.
+  if (explore.playerZ < -L) {
     ctl.z += L;
+    explore.shift(L);
     chase.shift(L);
   }
-  world.update(ctl.z);
+  const px = explore.playerX, pz = explore.playerZ;
+  world.update(pz);
   rider.root.position.set(ctl.x, 0, ctl.z);
   rider.root.rotation.y = ctl.yaw;
-  rider.update(dt, {
-    speed: ctl.speed,
-    steer: ctl.steer * 1.6,
-    lean: ctl.lean,
-    crank: ctl.crank,
-    wheel: ctl.wheel,
-    pedaling: ctl.pedaling,
-    time: t,
-  });
-  chase.update(dt, ctl, t, rider);
+  const onFoot = explore.onFoot;
+  rider.update(
+    dt,
+    {
+      speed: ctl.speed,
+      steer: onFoot ? ctl.steer * 1.6 * (1 - explore.kick) + explore.parkSteer : ctl.steer * 1.6,
+      lean: onFoot ? ctl.lean * (1 - explore.kick) + explore.parkLean : ctl.lean,
+      crank: ctl.crank,
+      wheel: ctl.wheel,
+      pedaling: onFoot ? 0 : ctl.pedaling,
+      time: t,
+      kick: explore.kick,
+    },
+    onFoot ? explore.foot : undefined,
+  );
+  if (onFoot) explore.updateCamera(dt, chase.cam);
+  else chase.update(dt, ctl, t, rider);
   sky.follow(chase.cam.position);
   if (audio.state === "running") {
-    near = world.closeness(ctl.x, ctl.z);
-    const u = ctl.x - roadX(ctl.z);
+    near = world.closeness(px, pz);
+    const u = px - roadX(pz);
     // Paddies line the left side; the village side on the right is drier.
     const water = Math.max(0, Math.min(1, 1 - (u + 4.9) / 12)) * (1 - near.houses * 0.5);
-    const roughness = 0.2 + 0.2 * (0.5 + 0.5 * Math.sin(ctl.z * 0.037) * Math.sin(ctl.z * 0.011));
+    const roughness = 0.2 + 0.2 * (0.5 + 0.5 * Math.sin(pz * 0.037) * Math.sin(pz * 0.011));
     audio.update(dt, Math.abs(ctl.speed), Math.abs(ctl.cadence), Math.abs(ctl.wheelRate), ctl.pedaling, ctl.brakePressure, {
       steer: Math.max(-1, Math.min(1, ctl.steer / 0.3)),
       bump: ctl.bumpImpulse,
@@ -208,14 +227,18 @@ function frame(now: number) {
   }
 
   // Sun shadow frustum centred ~30 m ahead of the rider (where the camera looks).
-  shadowCenter.set(ctl.x - Math.sin(ctl.yaw) * 30, 0, ctl.z - Math.cos(ctl.yaw) * 30);
+  if (onFoot) {
+    chase.cam.getWorldDirection(shadowCenter);
+    const l = Math.hypot(shadowCenter.x, shadowCenter.z) || 1;
+    shadowCenter.set(px + (shadowCenter.x / l) * 22, 0, pz + (shadowCenter.z / l) * 22);
+  } else shadowCenter.set(ctl.x - Math.sin(ctl.yaw) * 30, 0, ctl.z - Math.cos(ctl.yaw) * 30);
   renderer.info.reset();
   shadow.update(renderer, scene, shadowCenter);
   reflection.update(renderer, scene, chase.cam, -0.22);
   post.setNear(chase.cam.near);
   post.render(scene, chase.cam, t);
 
-  hud.textContent = `${Math.round(ctl.speed * 3.6)} km/h`;
+  hud.textContent = onFoot ? "" : `${Math.round(ctl.speed * 3.6)} km/h`;
   frames++;
   fpsT += dt;
   if (fpsT >= 1) {
@@ -315,6 +338,52 @@ window.__ride = {
   roadX(z: number) {
     return roadX(z);
   },
+  cycleCam() {
+    chase.cycle();
+  },
+  get camMode() {
+    return chase.mode;
+  },
+  /** Her head in screen pixels (for face crops in the screenshot script). */
+  headScreen() {
+    const v = rider.headWorld(new THREE.Vector3()).project(chase.cam);
+    return { x: ((v.x + 1) / 2) * innerWidth, y: ((1 - v.y) / 2) * innerHeight, z: v.z };
+  },
+  /** On-foot test hooks. */
+  explore: {
+    get state() {
+      return {
+        mode: explore.mode,
+        x: explore.x,
+        z: explore.z,
+        u: explore.x - roadX(explore.z),
+        y: explore.y,
+        yaw: explore.yaw,
+        speed: explore.speed,
+        bikeDist: explore.bikeDistance,
+        bikeVisible: rider.root.visible,
+        inHouse: houseAt(explore.x, explore.z, 0) > 0,
+      };
+    },
+    pressF() {
+      explore.pressF();
+    },
+    teleport(u: number, z: number, yaw?: number) {
+      explore.teleport(u, z, yaw);
+    },
+    orbit(rel: number, pitch: number, dist: number) {
+      explore.setOrbit(rel, pitch, dist);
+    },
+    walk(dx: number, dz: number, run = false) {
+      explore.autoWalk = dx || dz ? { dx, dz, run } : null;
+    },
+    faceYaw(yaw: number) {
+      explore.yaw = yaw;
+    },
+    lookAround(on: boolean) {
+      explore.lookAround = on;
+    },
+  },
   get fppBlend() {
     return chase.fppBlend;
   },
@@ -332,7 +401,7 @@ window.__ride = {
     return world.obstacles().map((o) => ({ u: o.x - roadX(o.z), z: o.z, r: o.r }));
   },
   get ctl() {
-    return { x: ctl.x, z: ctl.z, u: ctl.x - roadX(ctl.z), speed: ctl.speed, bumped: ctl.bumped };
+    return { x: ctl.x, z: ctl.z, u: ctl.x - roadX(ctl.z), yaw: ctl.yaw, speed: ctl.speed, bumped: ctl.bumped };
   },
   stats() {
     const gl = renderer.getContext();

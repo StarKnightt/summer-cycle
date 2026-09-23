@@ -621,7 +621,7 @@ export function buildChunk(k: number): Chunk {
     const bucket = far ? farTrees : trees;
     (bucket[key] ??= newInst());
     pushInst(bucket[key], roadX(z) + u, groundH(u, z) - 0.1, z, rng() * 6.28, s, s * range(rng, 0.9, 1.1), hsl(col("#ffffff"), rng, 0.015, 0.05, 0.05));
-    if (Math.abs(u) < 14) colliders.push({ x: roadX(z) + u, z, r: 0.5 * s });
+    if (Math.abs(u) < 46) colliders.push({ x: roadX(z) + u, z, r: 0.5 * s });
   };
   // Village backdrop: a big dark tree mass behind the houses (as in the reference).
   for (const h of HOUSES) {
@@ -973,3 +973,6 @@ export class World {
     return out;
   }
 }
+
+/** Layout data for the on-foot explorer (walkable paddy banks, house footprints, fences). */
+export const LAYOUT = { ROW_P, COL_P, NROWS, BERM0, HOUSES, FENCES_LEFT, GUARDRAIL_RIGHT, paddyLevel } as const;

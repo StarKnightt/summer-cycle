@@ -36,6 +36,8 @@ export const G = {
   uNoFringe: { value: 0 },
   /** Painted leaf atlas (see leafAtlas.ts); assigned once the renderer exists. */
   uLeafTex: { value: null as THREE.Texture | null },
+  /** Grass parting around her feet when she walks: (x, z, radius, strength). */
+  uPush: { value: new THREE.Vector4(0, 0, 0.8, 0) },
 };
 
 export const COMMON = /* glsl */ `
@@ -52,6 +54,7 @@ uniform vec3 uRimColor;
 uniform vec2 uWindDir;
 uniform float uNoFringe;
 uniform sampler2D uLeafTex;
+uniform vec4 uPush;
 uniform sampler2D uShadowMap;
 uniform mat4 uShadowMat;
 uniform float uShadowOn;
@@ -290,6 +293,13 @@ void main(){
     wp = vec4(c + (right * position.x + up * position.y) * near, 1.0);
   }
   if (aWind > 0.0) wp.xyz += windOffset(wp.xyz, aWind);
+  if (aWind > 0.0 && uPush.w > 0.0) {
+    vec2 pd = wp.xz - uPush.xy;
+    float pl = length(pd);
+    float pf = (1.0 - smoothstep(uPush.z * 0.35, uPush.z, pl)) * uPush.w;
+    wp.xz += pd / max(pl, 1e-3) * pf * min(aWind, 1.0) * 0.45;
+    wp.y -= pf * min(aWind, 1.0) * 0.12;
+  }
   vWPos = wp.xyz;
   vN = normalize(mat3(m) * normal);
   vCol = color;

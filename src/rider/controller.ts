@@ -30,6 +30,8 @@ export class Controller {
   brakePressure = 0;
   /** 0..1 impulse on the frame she knocks an obstacle. */
   bumpImpulse = 0;
+  /** Stopping to get off: ignore input/autopilot, brake hard to a standstill, bars straight. */
+  hold = false;
   private coastT = 0;
 
   constructor(public autoplay: boolean, startZ = START_Z) {
@@ -43,7 +45,10 @@ export class Controller {
     let throttle = 0;
     let brake = 0;
     let steerIn = 0;
-    if (this.autoplay) {
+    if (this.hold) {
+      this.speed = Math.max(0, this.speed - 9 * dt);
+      brake = 0;
+    } else if (this.autoplay) {
       // Cruise with gentle surges, and a short coast every so often (freewheel ticking).
       const target = CRUISE + 0.6 * Math.sin(this.time * 0.17) + 0.3 * Math.sin(this.time * 0.41);
       this.coastT = (this.time % 17) > 13.5 ? 1 : 0;
@@ -67,7 +72,9 @@ export class Controller {
     // Speed: pedal to accelerate, drift back to cruise, brake to stop; holding S at a standstill
     // walks the bike backward at ~0.8 m/s.
     const tgt = CRUISE;
-    if (brake) {
+    if (this.hold) {
+      // (decelerated above)
+    } else if (brake) {
       if (this.speed > 0.05) this.speed = Math.max(0, this.speed - 4.2 * dt);
       else this.speed = damp(this.speed, -BACK, 4, dt);
     } else if (this.speed < 0) this.speed = Math.min(0, this.speed + 3 * dt);
@@ -76,9 +83,9 @@ export class Controller {
     else if (this.speed < tgt) this.speed += 0.9 * dt;
     else this.speed -= 0.35 * dt;
     this.speed = clamp(this.speed, -BACK, MAX);
-    this.braking = !!brake && this.speed > 0.05;
+    this.braking = (!!brake || this.hold) && this.speed > 0.05;
     this.brakePressure = damp(this.brakePressure, this.braking ? 1 : 0, 10, dt);
-    const wantPedal = !brake && this.speed >= 0 && (throttle > 0 || (!this.coastT && this.speed <= tgt + 0.05)) ? 1 : 0;
+    const wantPedal = !brake && !this.hold && this.speed >= 0 && (throttle > 0 || (!this.coastT && this.speed <= tgt + 0.05)) ? 1 : 0;
     this.pedaling = damp(this.pedaling, wantPedal, 5, dt);
 
     // Steering → yaw rate via bicycle kinematics; less authority at speed for smoothness.

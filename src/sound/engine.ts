@@ -3,6 +3,7 @@ import { BikeLayer } from "./bike";
 import { clamp, reverbIR, smoothstep, vnoise } from "./dsp";
 import { Kit, type Env, type Layer, type RideState } from "./kit";
 import { BirdLayer, CicadaLayer, WaterLayer } from "./nature";
+import { Steps, type StepSurface } from "./steps";
 
 export type LayerName = "bike" | "wind" | "cicadas" | "birds" | "water" | "ambience";
 export const LAYER_NAMES: LayerName[] = ["bike", "wind", "cicadas", "birds", "water", "ambience"];
@@ -42,6 +43,7 @@ export class SoundEngine {
   private readonly cicadas: CicadaLayer;
   private readonly water: WaterLayer;
   private readonly amb: AmbienceLayer;
+  private readonly steps: Steps;
   private readonly volume: GainNode;
   private readonly mix: GainNode;
   private readonly verbIn: AudioNode;
@@ -125,6 +127,7 @@ export class SoundEngine {
     this.water = new WaterLayer(kit);
     this.amb = new AmbienceLayer(kit);
     this.layers = { bike: this.bike, wind: new WindLayer(kit), cicadas: this.cicadas, birds: this.birds, water: this.water, ambience: this.amb };
+    this.steps = new Steps(kit, mix, verbIn);
     this.solo(null);
     if (!this.lazy) kit.pump(Infinity);
   }
@@ -191,6 +194,11 @@ export class SoundEngine {
 
   bump(when: number, strength: number): void {
     this.bike.bump(when, strength, this.state);
+  }
+
+  /** One footstep on `surface` (0…1.5 strength) — used while she explores on foot. */
+  footstep(when: number, surface: StepSurface, strength: number): void {
+    this.steps.play(when, surface, strength);
   }
 
   trigger(ev: SoundEvent, when: number): void {
