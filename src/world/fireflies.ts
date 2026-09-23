@@ -15,7 +15,7 @@ export class Fireflies {
   private readonly r = mulberry32(911);
   private readonly n: number;
 
-  constructor(n = 64) {
+  constructor(n = 110) {
     this.n = n;
     const quad = new THREE.PlaneGeometry(1, 1);
     const g = new THREE.InstancedBufferGeometry();

@@ -67,8 +67,13 @@ try {
     await page.evaluate(() => window.__ride.setCam("tpp"));
   }
   if (want("mid")) {
-    await page.evaluate(() => { window.__ride.setTime("golden", true); window.__ride.setTime("sunset"); });
+    // Real key press: T from golden hour starts the transition to sunset.
+    await page.evaluate(() => window.__ride.setTime("golden", true));
+    await sleep(300);
+    await page.keyboard.press("KeyT");
     await sleep(1800);
+    const now = await page.evaluate(() => window.__ride.timeOfDay);
+    if (now !== "sunset") errors.push(`T key: expected sunset, got ${now}`);
     await shot(page, "transition_golden_to_sunset");
   }
   if (FPS) {
