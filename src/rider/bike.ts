@@ -283,6 +283,8 @@ export class Bike {
   private kick = new THREE.Group();
   private frontWheel = new THREE.Group();
   private rearWheel = new THREE.Group();
+  /** Test hook: freeze the crank (and her legs) at this angle; null = follow the ride. */
+  crankHold: number | null = null;
   private crank = new THREE.Group();
   private pedals: THREE.Group[] = [];
   private bell = new THREE.Group();
