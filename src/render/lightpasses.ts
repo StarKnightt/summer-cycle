@@ -18,7 +18,7 @@ export function onLayers(o: THREE.Object3D, ...layers: number[]): void {
 export class SunShadow {
   readonly rt: THREE.WebGLRenderTarget;
   readonly cam: THREE.OrthographicCamera;
-  private mat = shadowDepthMaterial();
+  readonly mat = shadowDepthMaterial();
   private readonly size: number;
   private readonly half: number;
   private bias = new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);

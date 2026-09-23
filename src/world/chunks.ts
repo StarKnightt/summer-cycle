@@ -118,30 +118,64 @@ let protos: {
   rocks: Geo[];
 } | null = null;
 
+const protoCache = new Map<string, Geo>();
+const memo = (key: string, make: () => Geo) => () => {
+  let g = protoCache.get(key);
+  if (!g) protoCache.set(key, (g = make()));
+  return g;
+};
+const T = (kind: TreeKind, seed: number, lod?: number) => memo(`${kind}${seed}:${lod ?? 0}`, () => tree(kind, seed, lod));
+const PROTO = {
+  trees: {
+    round: [T("round", 1), T("round", 2), T("round", 3)],
+    tall: [T("tall", 4), T("tall", 5)],
+    bush: [T("bush", 6), T("bush", 7)],
+    cedar: [T("cedar", 8), T("cedar", 9)],
+  },
+  far: {
+    round: [T("round", 11, 1), T("round", 12, 1)],
+    tall: [T("tall", 14, 1)],
+    bush: [T("bush", 16, 1)],
+    cedar: [T("cedar", 18, 1), T("cedar", 19, 1)],
+  },
+  grass: [memo("g1", () => grassClump(1)), memo("g2", () => grassClump(2)), memo("g3", () => grassClump(3))],
+  verge: [memo("v21", () => vergeClump(21)), memo("v22", () => vergeClump(22)), memo("v23", () => vergeClump(23))],
+  short: memo("short", () => shortGrass(4)),
+  fringe: memo("fringe", () => fringeGrass(6)),
+  rice: memo("rice", () => riceTuft(5)),
+  flower: memo("flower", () => flower()),
+  fly: memo("fly", () => butterfly()),
+  spike: memo("spike", () => flowerSpike(9)),
+  rocks: [memo("r1", () => boulder(1)), memo("r2", () => boulder(2.7))],
+};
+
+/** Every shared prototype as a separate build step, so a loader can yield between them. */
+export function protoSteps(): (() => void)[] {
+  const out: (() => void)[] = [];
+  const walk = (v: unknown) => {
+    if (typeof v === "function") out.push(v as () => void);
+    else if (v && typeof v === "object") for (const x of Object.values(v)) walk(x);
+  };
+  walk(PROTO);
+  return out;
+}
+
 function getProtos() {
   if (!protos) {
+    const all = <K extends string>(r: Record<K, (() => Geo)[]>) =>
+      Object.fromEntries(Object.entries(r).map(([k, v]) => [k, (v as (() => Geo)[]).map((f) => f())])) as Record<K, Geo[]>;
     protos = {
-      trees: {
-        round: [tree("round", 1), tree("round", 2), tree("round", 3)],
-        tall: [tree("tall", 4), tree("tall", 5)],
-        bush: [tree("bush", 6), tree("bush", 7)],
-        cedar: [tree("cedar", 8), tree("cedar", 9)],
-      },
-      far: {
-        round: [tree("round", 11, 1), tree("round", 12, 1)],
-        tall: [tree("tall", 14, 1)],
-        bush: [tree("bush", 16, 1)],
-        cedar: [tree("cedar", 18, 1), tree("cedar", 19, 1)],
-      },
-      grass: [grassClump(1), grassClump(2), grassClump(3)],
-      verge: [vergeClump(21), vergeClump(22), vergeClump(23)],
-      short: shortGrass(4),
-      fringe: fringeGrass(6),
-      rice: riceTuft(5),
-      flower: flower(),
-      fly: butterfly(),
-      spike: flowerSpike(9),
-      rocks: [boulder(1), boulder(2.7)],
+      trees: all(PROTO.trees),
+      far: all(PROTO.far),
+      grass: PROTO.grass.map((f) => f()),
+      verge: PROTO.verge.map((f) => f()),
+      short: PROTO.short(),
+      fringe: PROTO.fringe(),
+      rice: PROTO.rice(),
+      flower: PROTO.flower(),
+      fly: PROTO.fly(),
+      spike: PROTO.spike(),
+      rocks: PROTO.rocks.map((f) => f()),
     };
   }
   return protos;
@@ -735,12 +769,17 @@ export class World {
   readonly chunks: Chunk[] = [];
   readonly root = new THREE.Group();
 
-  constructor() {
-    for (let k = 0; k < NCHUNK; k++) {
-      const c = buildChunk(k);
-      this.chunks.push(c);
-      this.root.add(c.group);
-    }
+  static readonly CHUNKS = NCHUNK;
+
+  /** Pass false to build the chunks one at a time with addChunk() (0 … CHUNKS-1). */
+  constructor(buildAll = true) {
+    if (buildAll) for (let k = 0; k < NCHUNK; k++) this.addChunk(k);
+  }
+
+  addChunk(k: number): void {
+    const c = buildChunk(k);
+    this.chunks.push(c);
+    this.root.add(c.group);
   }
 
   /** Recycle chunks so the window [pz - L + behind, pz + behind] is always covered. */

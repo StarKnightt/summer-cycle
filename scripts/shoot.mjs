@@ -38,7 +38,7 @@ try {
     if (/warning X\d{4}/.test(txt)) return;
     if (m.type() === "error" || m.type() === "warning") errors.push(`${m.type()}: ${txt}`);
   });
-  await page.goto(`${URL}?autoplay=1${EXTRA ? "&" + EXTRA : ""}`, { waitUntil: "load" });
+  await page.goto(`${URL}?autoplay=1&skipintro=1${EXTRA ? "&" + EXTRA : ""}`, { waitUntil: "load" });
   await page.waitForFunction(() => window.__ride?.ready === true, null, { timeout: 90_000 });
   await page.mouse.click(W / 2, H / 2);
   const t0 = await page.evaluate(() => window.__ride.time);

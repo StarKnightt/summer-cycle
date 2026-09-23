@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { G } from "./render/materials";
 import { Post } from "./render/post";
 import { LAYER_REFLECT, LAYER_SHADOW, PaddyReflection, SunShadow, onLayers } from "./render/lightpasses";
-import { World, type Contact } from "./world/chunks";
+import { World, protoSteps, type Contact } from "./world/chunks";
 import { Sky } from "./world/sky";
 import { L, roadX, roadYaw } from "./world/road";
 import { Rider } from "./rider/rider";
@@ -10,10 +10,16 @@ import { Controller } from "./rider/controller";
 import { ChaseCam, type CamMode } from "./rider/camera";
 import { Input } from "./core/input";
 import { RideAudio } from "./audio";
+import { Loader, type Stage } from "./loader";
+import { precompile, warmDraws } from "./render/precompile";
 
 const params = new URLSearchParams(location.search);
 const AUTOPLAY = params.has("autoplay") && params.get("autoplay") !== "0";
 const KUWA = params.get("kuwahara") !== "0";
+/** Go straight into the ride once built (no "click to ride" wait) — for automated captures. */
+const SKIP_INTRO = params.has("skipintro") && params.get("skipintro") !== "0";
+// Loader progress weights (sum 1), proportional to measured build time on a desktop GPU.
+const W_BOOT = 0.03, W_SKY = 0.04, W_PROTOS = 0.05, W_CHUNKS = 0.06, W_RIDER = 0.01, W_COMPILE = 0.15, W_DRAW = 0.6, W_WARM = 0.06;
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", stencil: false });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
@@ -23,13 +29,42 @@ renderer.info.autoReset = false;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
+const loader = new Loader(SKIP_INTRO);
+(window as unknown as { __loader: Loader }).__loader = loader;
+loader.advance(W_BOOT, "trees");
+// Build in small steps, handing the main thread back between them so the loader keeps painting.
+const bootLog: [string, number][] = [];
+const bootT0 = performance.now();
+const yieldToPaint = () =>
+  new Promise<void>((res) => {
+    const to = setTimeout(res, 120); // hidden tabs never fire rAF
+    requestAnimationFrame(() => setTimeout(() => (clearTimeout(to), res()), 0));
+  });
+async function step<T>(label: string, stage: Stage, weight: number, fn: () => T): Promise<T> {
+  const s = performance.now();
+  const out = fn();
+  bootLog.push([label, Math.round(performance.now() - s)]);
+  loader.advance(weight, stage);
+  await yieldToPaint();
+  return out;
+}
+await yieldToPaint();
+
 const scene = new THREE.Scene();
-const world = new World();
+const protoSteps_ = protoSteps();
+for (let i = 0; i < protoSteps_.length; i++)
+  await step(`proto${i}`, i < protoSteps_.length * 0.55 ? "trees" : "grass", W_PROTOS / protoSteps_.length, protoSteps_[i]);
+const world = new World(false);
+const CHUNK_STAGES: Stage[] = ["rice", "houses", "poles", "road"];
+for (let k = 0; k < World.CHUNKS; k++)
+  await step(`chunk${k}`, CHUNK_STAGES[Math.floor((k / World.CHUNKS) * CHUNK_STAGES.length)], W_CHUNKS / World.CHUNKS, () => world.addChunk(k));
 scene.add(world.root);
-const sky = new Sky();
+// Created after the world on purpose: opaque draws sort by material id first, and the sky dome must
+// draw after the scenery so early-z rejects most of its pixels.
+const sky = await step("sky", "sky", W_SKY, () => new Sky());
 scene.add(sky.group);
 scene.add(sky.motes);
-const rider = new Rider();
+const rider = await step("rider", "rider", W_RIDER, () => new Rider());
 onLayers(rider.lean, LAYER_SHADOW, LAYER_REFLECT);
 scene.add(rider.root);
 
@@ -44,6 +79,25 @@ if (camParam === "fpp") {
   chase.fpp = 1;
 } else if (camParam) chase.mode = camParam as CamMode;
 const post = new Post(renderer, innerWidth, innerHeight, { kuwahara: KUWA });
+{
+  const s = performance.now();
+  let done = 0;
+  await precompile(renderer, scene, chase.cam, post, shadow, (f) => {
+    loader.advance((f - done) * W_COMPILE, "paint");
+    done = f;
+  }, yieldToPaint);
+  bootLog.push(["compile", Math.round(performance.now() - s)]);
+  // The first chunk meets every shader for the first time, so it goes mesh by mesh.
+  const [first, ...rest] = world.root.children;
+  const parts = [...first.children, ...rest, sky.group, sky.motes, rider.root];
+  let tp = performance.now();
+  await warmDraws(renderer, scene, chase.cam, post, shadow, parts, (i) => {
+    const n = performance.now();
+    bootLog.push([`draw${i}`, Math.round(n - tp)]);
+    tp = n;
+    loader.advance(W_DRAW / parts.length, i < parts.length - 3 ? "paint" : "cicadas");
+  }, yieldToPaint);
+}
 const audio = new RideAudio();
 const input = new Input(
   () => audio.start(),
@@ -88,6 +142,8 @@ const WARM_FRAMES = 8;
 const FADE = 0.45;
 const fadeEl = document.getElementById("fade")!;
 let warm = 0;
+/** Intro mode: the finished frame waits (clock frozen, loop idle) behind the loader for a gesture. */
+let waiting = false;
 function frame(now: number) {
   let dt = (now - last) / 1000;
   last = now;
@@ -95,7 +151,8 @@ function frame(now: number) {
   if (warm < WARM_FRAMES) {
     warm++;
     dt = 0;
-  } else {
+    loader.advance(W_WARM / WARM_FRAMES, "cicadas");
+  } else if (SKIP_INTRO) {
     const k = Math.min(1, t / FADE);
     fadeEl.style.opacity = String(1 - k * k * (3 - 2 * k));
     if (k >= 1 && fadeEl.style.display !== "none") fadeEl.style.display = "none";
@@ -163,8 +220,28 @@ function frame(now: number) {
     frames = 0;
     fpsT = 0;
   }
+  if (!started) bootLog.push([`warm${warm}`, Math.round(performance.now() - now)]);
+  if (warm === WARM_FRAMES && !started) {
+    started = true;
+    bootLog.push(["total", Math.round(performance.now() - bootT0)]);
+    if (SKIP_INTRO) loader.remove();
+    else {
+      // The gesture that dismisses the loader also starts the audio (autoplay policy).
+      fadeEl.style.display = "none";
+      waiting = true;
+      loader.ready(() => {
+        audio.start();
+        waiting = false;
+        last = performance.now();
+        loader.dissolve();
+        requestAnimationFrame(frame);
+      });
+      return;
+    }
+  }
   requestAnimationFrame(frame);
 }
+let started = false;
 requestAnimationFrame(frame);
 
 declare global {
@@ -179,6 +256,14 @@ window.__ride = {
   get fps() {
     return fps;
   },
+  /** Intro loader: waiting = built and showing "click to ride"; progress 0…1; boot step timings (ms). */
+  get waiting() {
+    return waiting;
+  },
+  get loadProgress() {
+    return loader.progress;
+  },
+  bootLog,
   fpsLog,
   get time() {
     return t;
