@@ -130,17 +130,24 @@ const dirOf = (az: number, el: number) => V(Math.sin(az) * Math.cos(el), Math.si
 const CHIN = V(0, -0.72, -0.69).normalize();
 const CHEEK_L = V(0.55, -0.3, -0.78).normalize();
 const CHEEK_R = V(-0.55, -0.3, -0.78).normalize();
+const TEMPLE_L = V(0.8, 0.25, -0.55).normalize();
+const TEMPLE_R = V(-0.8, 0.25, -0.55).normalize();
+const JAW_L = V(0.72, -0.62, -0.32).normalize();
+const JAW_R = V(-0.72, -0.62, -0.32).normalize();
 
 /** Radial face surface: ellipsoid with a flatter front, narrowing jaw, soft pointed chin, round cheeks. */
 function faceR(d: THREE.Vector3): number {
-  const cz = d.z < 0 ? 0.85 : 1.0;
+  const cz = d.z < 0 ? 0.88 : 1.0;
   const cy = d.y < 0 ? 0.92 : 1.01;
   let r = HEAD_R / Math.sqrt((d.x / 0.95) ** 2 + (d.y / cy) ** 2 + (d.z / cz) ** 2);
   const lower = smooth(-0.05, -0.8, d.y);
   r *= 1 - 0.155 * lower * Math.abs(d.x);
   r *= 1 - 0.16 * smooth(-0.2, -0.9, d.y) * Math.max(0, d.z);
   r *= 1 + 0.09 * Math.exp(-(1 - d.dot(CHIN)) / 0.035);
-  r *= 1 + 0.035 * (Math.exp(-(1 - d.dot(CHEEK_L)) / 0.05) + Math.exp(-(1 - d.dot(CHEEK_R)) / 0.05));
+  r *= 1 + 0.05 * (Math.exp(-(1 - d.dot(CHEEK_L)) / 0.05) + Math.exp(-(1 - d.dot(CHEEK_R)) / 0.05));
+  // Soft temples above the cheekbones and a gentle jaw line under them: the face isn't a flat disc.
+  r *= 1 - 0.03 * (Math.exp(-(1 - d.dot(TEMPLE_L)) / 0.03) + Math.exp(-(1 - d.dot(TEMPLE_R)) / 0.03));
+  r *= 1 - 0.035 * (Math.exp(-(1 - d.dot(JAW_L)) / 0.04) + Math.exp(-(1 - d.dot(JAW_R)) / 0.04));
   return r;
 }
 
@@ -425,7 +432,7 @@ function lensMaterial(): THREE.ShaderMaterial {
         vec2 q2 = q - vec2(0.2, 0.0);
         float s2 = (1.0 - smoothstep(0.025, 0.05, abs(q2.x))) * (1.0 - smoothstep(0.1, 0.16, abs(q2.y)));
         float glint = max(s1, s2 * 0.85) * (1.0 - smoothstep(0.8, 0.92, r));
-        float a = 0.025 + 0.07 * smoothstep(0.6, 1.0, r) + 0.06 * fres;
+        float a = 0.02 + 0.04 * fres;
         vec3 tint = vec3(0.82, 0.92, 1.0);
         vec3 col = mix(tint, vec3(1.0), glint);
         gColor = vec4(col, clamp(a + glint * 0.35, 0.0, 0.6));
@@ -878,16 +885,19 @@ export class Rider {
       const lower = box(0.012, 0.003, 0.003, "#6a3a2a");
       lower.rotateZ(s * 0.25);
       this.onHead(lower, az + s * 0.09, EYE_EL - 0.2, 0.002, ID.skin);
-      const brow = box(0.026, 0.0036, 0.003, "#4a2e20");
-      brow.rotateZ(s * 0.08);
-      this.onHead(brow, az * 1.04, 0.33, 0.004, ID.eye);
+      // Brows sit high, just under the bang tips, well clear of the glasses rims.
+      const brow = box(0.024, 0.003, 0.0025, "#4a2e20");
+      brow.rotateZ(s * 0.12);
+      this.onHead(brow, az * 1.06, 0.47, 0.004, ID.eye);
       this.onHead(this.disc(0.018, 0.008, "#f2a6a0", M.skin), s * 0.63, -0.3, 0.001, ID.skin);
     }
-    // Nose: a tiny flat-shaded wedge (catches one lit and one shaded facet, and a profile bump).
-    const nose = new THREE.BufferGeometry();
-    const top = [0, 0.026, 0], l = [-0.011, -0.008, 0], r = [0.011, -0.008, 0], tip = [0, -0.006, 0.034];
-    nose.setAttribute("position", new THREE.Float32BufferAttribute([...top, ...l, ...tip, ...top, ...tip, ...r, ...l, ...r, ...tip], 3));
-    this.onHead(prep(nose, SKIN, M.skin), 0, -0.27, -0.002, ID.skin);
+    // Nose: a tiny soft tip (smooth skin shading, reads as a bump in profile) + a faint shadow dash.
+    const nose = sphere(1, SKIN, M.skin, 12, 8);
+    nose.scale(0.0075, 0.0068, 0.0105);
+    this.onHead(nose, 0, -0.29, -0.001, ID.skin);
+    const noseShade = this.disc(0.0055, 0.0022, "#e2a48f", M.skin);
+    noseShade.rotateZ(-0.35);
+    this.onHead(noseShade, -0.035, -0.345, 0.0012, ID.skin);
     // Short soft smile.
     const mouth = prep(new THREE.TorusGeometry(0.019, 0.0034, 3, 8, 1.1), "#7a3230", M.plain);
     mouth.rotateZ(-Math.PI / 2 - 0.55);
@@ -902,13 +912,13 @@ export class Rider {
    * the head surface), a keyhole bridge, hinges and temples that tuck under the hair toward the ears.
    */
   private buildGlasses(): void {
-    const FR = "#1e120d";
-    const R = 0.034, TUBE = 0.0021, CLEAR = 0.009;
+    const FR = "#2e1b12";
+    const R = 0.0375, TUBE = 0.0014, CLEAR = 0.009;
     const parts: THREE.BufferGeometry[] = [];
     const inner: THREE.Vector3[] = [], hinge: THREE.Vector3[] = [], lensN: THREE.Vector3[] = [];
     const clearance = (q: THREE.Vector3) => q.length() - faceR(q.clone().normalize());
     for (const s of [-1, 1]) {
-      const d = dirOf(s * 0.335, -0.03);
+      const d = dirOf(s * 0.34, -0.01);
       const n = dirOf(s * 0.14, 0.03);
       const ex = V(0, 1, 0).cross(n).normalize(); // ≈ -X
       const ey = n.clone().cross(ex).normalize();
@@ -1027,6 +1037,9 @@ export class Rider {
     for (const s of [-1, 1]) {
       // Face-framing side bangs, cheek locks over the face edge, and a fuller clump behind the ear.
       this.add(hairClump(s * 1.0, 1.0, s * 1.12, 0.22, 0.018, 0.22, 0.009), this.head, ID.hair);
+      // Bob locks hanging in front of the ears to the jaw line, framing the face.
+      this.add(hairClump(s * 0.98, 0.92, s * 1.0, -0.55, 0.021, 0.3, 0.0095, 10, 1), this.head, ID.hair);
+      this.add(hairClump(s * 1.12, 0.85, s * 1.14, -0.62, 0.022, 0.28, 0.0095, 10, 1), this.head, ID.hair);
       this.add(hairClump(s * 1.3, 0.72, s * 1.25, -0.56, 0.02, 0.25, 0.01, 9, 1), this.head, ID.hair);
       this.add(hairClump(s * 1.5, 0.5, s * 1.58, -0.42, 0.026, 0.3, 0.01, 8, 1), this.head, ID.hair);
     }
