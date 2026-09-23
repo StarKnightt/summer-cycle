@@ -12,7 +12,7 @@ try {
   for (let round = 0; round < 2; round++)
     for (const url of urls) {
       const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-      await page.goto(`${url}?autoplay=1`, { waitUntil: "load" });
+      await page.goto(`${url}?autoplay=1&skipintro=1`, { waitUntil: "load" });
       await page.waitForFunction(() => window.__ride?.ready === true, null, { timeout: 90_000 });
       await page.mouse.click(960, 540);
       await page.waitForTimeout(3000);

@@ -23,9 +23,25 @@ The build uses a relative base (`./`), so `dist/` can be dropped onto any static
 | W / ↑ | Pedal harder (she cruises on her own) |
 | S / ↓ | Brake; hold at a standstill to walk the bike backward |
 | A / ← , D / → | Steer |
-| V | Toggle third-person / first-person camera |
+| V | Toggle third-person / first-person camera (from a cinematic shot: straight to first person) |
+| C | Cinematic ride cameras: chase → front tracking shot (her face) → side tracking shot → chase |
+| F | Get off and explore on foot (brakes to a stop first); next to the bike, get back on |
 | B | Ring the bell |
 | M | Mute / unmute |
+
+On foot:
+
+| Input | Action |
+| --- | --- |
+| W A S D / arrows | Walk, relative to the camera |
+| Shift (hold) | Jog |
+| Mouse drag | Orbit the camera around her (click to capture the mouse, Esc releases) |
+| Mouse wheel | Zoom in / out |
+| F | Get back on the bike when she's within ~2 m of it (a small "F — ride" hint appears) |
+
+She can wander the verges, the village lots around the houses and the paddy banks (not the
+water), but not through houses, poles, trunks or fences. The bike stays parked on its kickstand
+where she left it; if she's more than 60 m away, F wheels it over to the road edge nearest her.
 
 Audio starts on the first click or key press (browser autoplay rules).
 
@@ -38,4 +54,7 @@ Audio starts on the first click or key press (browser autoplay rules).
 ## Scripts
 
 - `pnpm shoot` captures the verification screenshots with Playwright (expects `pnpm preview` running).
+- `node scripts/explore.mjs --url=<server>` checks on-foot mode and the cinematic cameras
+  (screenshots, collision / remount / streaming tests, FPS); `scripts/fps-ab.mjs <urlA> <urlB>`
+  compares steady chase-cam FPS between two builds.
 - `audio-lab.html` is a dev-only sound playground (served by `pnpm dev`, not part of the build).
