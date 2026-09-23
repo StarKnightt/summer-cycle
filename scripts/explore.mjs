@@ -232,7 +232,9 @@ try {
 
   if (ONLY.includes("pauselock")) {
     // Real pointer lock (no autoplay): hold frees the mouse without pausing; tap pauses; click resumes + re-locks.
-    const p4 = await browser.newPage({ viewport: { width: 1366, height: 768 } });
+    // Freeze the autoplay page so its rendering does not starve the new page's shader compile.
+    await R(() => window.__ride.pause.pause());
+    const p4 = await browser.newPage({ viewport: { width: 1280, height: 720 } });
     p4.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
     p4.on("console", (m) => {
       if (m.type() === "error") errors.push(`error: ${m.text()}`);
@@ -240,7 +242,7 @@ try {
     await p4.goto(URL, { waitUntil: "load" });
     await p4.waitForFunction(() => window.__ride?.waiting === true, null, { timeout: 90_000 });
     await p4.waitForTimeout(1200);
-    await p4.mouse.click(683, 384);
+    await p4.mouse.click(640, 360);
     await p4.waitForTimeout(1200);
     const Q = () => p4.evaluate(() => ({ paused: window.__ride.pause.paused, locked: window.__ride.look.locked, keyLock: window.__ride.pause.keyLock, fs: !!document.fullscreenElement }));
     let q = await Q();
@@ -249,7 +251,7 @@ try {
     for (const kl of [q.keyLock, !q.keyLock]) {
       await p4.evaluate((v) => (window.__ride.pause.keyLock = v), kl);
       if (!(await Q()).locked) {
-        await p4.mouse.click(683, 384);
+        await p4.mouse.click(640, 360);
         await p4.waitForTimeout(500);
       }
       await p4.keyboard.down("Escape");
@@ -259,7 +261,7 @@ try {
       await p4.waitForTimeout(300);
       q = await Q();
       ok(`[keyLock=${kl}] hold: mouse freed, not paused`, (kl ? !mid.locked : true) && !mid.paused && !q.locked && !q.paused, `mid=${JSON.stringify(mid)} after=${JSON.stringify(q)}`);
-      await p4.mouse.click(683, 384);
+      await p4.mouse.click(640, 360);
       await p4.waitForTimeout(500);
       await p4.keyboard.down("Escape");
       await p4.waitForTimeout(80);
@@ -267,12 +269,13 @@ try {
       await p4.waitForTimeout(400);
       q = await Q();
       ok(`[keyLock=${kl}] tap: paused, mouse free`, q.paused && !q.locked, JSON.stringify(q));
-      await p4.mouse.click(683, 384);
+      await p4.mouse.click(640, 360);
       await p4.waitForTimeout(600);
       q = await Q();
       ok(`[keyLock=${kl}] click resumes + re-locks`, !q.paused && q.locked, JSON.stringify(q));
     }
     await p4.close();
+    await R(() => window.__ride.pause.resume(false));
   }
 
   if (ONLY.includes("fpp")) {
