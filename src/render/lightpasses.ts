@@ -92,14 +92,19 @@ export class PaddyReflection {
     this.rt.setSize(w, h);
   }
 
-  update(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, planeY: number): void {
+  /** Refresh every `every` frames; the texture keeps the projection it was rendered with. */
+  every = 2;
+  private tick = 0;
+
+  update(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, planeY: number): boolean {
+    if (this.tick++ % this.every !== 0) return false;
     const n = this.normal;
     const mirror = new THREE.Vector3(0, planeY, 0);
     mirror.x = camera.position.x;
     mirror.z = camera.position.z;
     const camPos = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
     const view = new THREE.Vector3().subVectors(mirror, camPos);
-    if (view.dot(n) > 0) return;
+    if (view.dot(n) > 0) return false;
     view.reflect(n).negate().add(mirror);
     const rot = new THREE.Matrix4().extractRotation(camera.matrixWorld);
     const look = new THREE.Vector3(0, 0, -1).applyMatrix4(rot).add(camPos);
@@ -142,5 +147,6 @@ export class PaddyReflection {
     renderer.render(scene, vc);
     G.uNoFringe.value = 0;
     renderer.setRenderTarget(null);
+    return true;
   }
 }

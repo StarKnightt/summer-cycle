@@ -70,4 +70,5 @@ Audio starts on the first click or key press (browser autoplay rules).
 - `node scripts/tod-shots.mjs --url=<server> --out=shots/tod` captures each time-of-day preset, the
   sunset paddy reflection, dusk lights + fireflies, a mid-transition frame and the timelapse;
   `scripts/tod-fps.mjs "name=<url>?" …` interleaves FPS runs of several builds / presets.
+- `node scripts/perf.mjs --url=<server> [--time=sunset] [--msaa=4]` runs the 40 s autoplay with the frame profiler and prints FPS plus GPU ms / draw calls / triangles per pass (JSON in `shots/perf/`).
 - `audio-lab.html` is a dev-only sound playground (served by `pnpm dev`, not part of the build).

@@ -327,6 +327,13 @@ void main(){
 `;
 
 const UBER_FS = /* glsl */ `
+// Compile-time material set: branches for ids the mesh never carries fold away (smaller program,
+// fewer registers, better occupancy). Default: every branch.
+#ifndef MT_MASK_V
+#define MT_MASK_V 0xFFFFFFFFu
+#endif
+const uint MT_MASK = MT_MASK_V;
+#define HAS(x) ((MT_MASK & (1u << uint(x))) != 0u)
 ${COMMON}
 ${OUT}
 ${LEAF_SHAPE}
@@ -373,7 +380,7 @@ void main(){
   float mask = uMask;
   int mt = vMat;
 
-  if (mt == 20) {           // flower card: five rounded petals + a golden eye, alpha-cut
+  if ((HAS(20) && mt == 20)) {           // flower card: five rounded petals + a golden eye, alpha-cut
     vec2 d = vUv - 0.5;
     float r = length(d), th = atan(d.y, d.x);
     float petal = 0.3 + 0.16 * cos(th * 5.0);
@@ -386,7 +393,7 @@ void main(){
     mask = -1.0; paint = 0.3; rim = 0.3;
   }
   float leafTone = -1.0, leafVar = 0.5;
-  if (mt == 17 || mt == 21) { // leaf card: painted leaf cluster from the atlas (uv already in the atlas)
+  if ((HAS(17) && mt == 17) || (HAS(21) && mt == 21)) { // leaf card: painted leaf cluster from the atlas (uv already in the atlas)
     vec4 lt = texture(uLeafTex, vUv);
     // Sharpen the mipmapped coverage to ~1 px, then hand it to alpha-to-coverage.
     float a = clamp((lt.a - 0.5) / max(fwidth(lt.a), 1e-3) + 0.5, 0.0, 1.0);
@@ -397,7 +404,7 @@ void main(){
     mask = -1.0;
     card = true;
   }
-  if (mt == 1) {            // foliage: painted leaf clumps
+  if ((HAS(1) && mt == 1)) {            // foliage: painted leaf clumps
     gFastShadow = true;
     vec3 an = abs(N);
     // Close to the camera the leaf cells get smaller and softer so they read as foliage, not facets.
@@ -433,7 +440,7 @@ void main(){
     paint = card ? 0.25 : 0.4; rim = 0.5;
     // Cards brushing past the lens fade out through coverage instead of popping at the near plane.
     if (card) gAlpha *= smoothstep(0.25, 0.9, distance(vWPos, cameraPosition));
-  } else if (mt == 2) {     // dark stained vertical wall boards
+  } else if ((HAS(2) && mt == 2)) {     // dark stained vertical wall boards
     vec2 tg = normalize(vec2(-N.z, N.x) + 1e-4);
     float s = dot(vWPos.xz, tg);
     float bx = s / 0.21;
@@ -447,7 +454,7 @@ void main(){
     // Weathering: darker and mossier toward the stone footing.
     base = mix(base, base * vec3(0.8, 0.9, 0.7), (1.0 - smoothstep(0.3, 1.0, vWPos.y)) * 0.6);
     paint = 0.5;
-  } else if (mt == 3) {     // kawara roof tiles (uv in metres): ribs down the slope, course lines
+  } else if ((HAS(3) && mt == 3)) {     // kawara roof tiles (uv in metres): ribs down the slope, course lines
     vec2 t = vec2(vUv.x / 0.25, vUv.y / 0.28);
     vec2 id = floor(t);
     float cu = fract(t.x);
@@ -462,14 +469,14 @@ void main(){
     float lich = smoothstep(0.62, 0.8, vnoise(vUv * 3.1 + 11.0)) * (1.0 - smoothstep(0.0, 2.2, vUv.y) * 0.6);
     base = mix(base, vec3(0.12, 0.13, 0.07), lich * 0.5);
     paint = 0.4; rim = 1.2;
-  } else if (mt == 4) {     // shoji: matte cream paper in a wooden lattice (daylight, no glow)
+  } else if ((HAS(4) && mt == 4)) {     // shoji: matte cream paper in a wooden lattice (daylight, no glow)
     float frame = max(aaLine(vUv.x * 5.0, 0.045), aaLine(vUv.y * 4.0, 0.04));
     frame = max(frame, 1.0 - aaStep(0.03, vUv.x) * aaStep(0.03, vUv.y) * (1.0 - aaStep(0.97, vUv.x)) * (1.0 - aaStep(0.97, vUv.y)));
     float fib = (vnoise(vUv * vec2(40.0, 90.0)) - 0.5) * 0.08 * aaKeep(vUv.y * 90.0);
     base = mix(vec3(0.8, 0.72, 0.53) * (1.0 + fib), vec3(0.08, 0.05, 0.03), frame);
     paint = 0.3;
     gEmit = vec3(1.0, 0.64, 0.32) * (1.0 - frame) * uNight * step(0.3, hash12(floor(vWPos.xz / 6.0))) * 0.9;
-  } else if (mt == 5) {     // glass: dark interior, sky sheen streak, faint warm depth
+  } else if ((HAS(5) && mt == 5)) {     // glass: dark interior, sky sheen streak, faint warm depth
     float frame = max(aaLine(vUv.x * 3.0, 0.03), aaLine(vUv.y * 2.0, 0.025));
     frame = max(frame, 1.0 - aaStep(0.04, vUv.x) * (1.0 - aaStep(0.96, vUv.x)));
     // One broad soft sheen (a sharp repeating stripe shimmered as the camera moved).
@@ -478,7 +485,7 @@ void main(){
     base = mix(glass, vec3(0.06, 0.04, 0.025), frame);
     paint = 0.2; rim = 0.0;
     gEmit = vec3(1.0, 0.6, 0.3) * (1.0 - frame) * uNight * step(0.45, hash12(floor(vWPos.xz / 6.0) + 3.1)) * 0.7;
-  } else if (mt == 6) {     // grass blades: soft up-facing normals, no ink
+  } else if ((HAS(6) && mt == 6)) {     // grass blades: soft up-facing normals, no ink
     N = normalize(mix(N, vec3(0.0, 1.0, 0.0), 0.7));
     // Cool dense grass: offset the warm sun so lit tips land near the authored #6f9a3e.
     base *= vec3(1.0, 1.22, 1.75);
@@ -487,25 +494,25 @@ void main(){
     base *= 1.0 + smoothstep(0.5, 1.0, wv) * clamp(vObj.y * 1.3 - 0.25, 0.0, 1.0) * 0.28;
     paint = 0.8; rim = 0.7; soft = 0.06;
     mask = -1.0;
-  } else if (mt == 7) {     // skin: broad soft wrap so faces never carry a hard crease
+  } else if ((HAS(7) && mt == 7)) {     // skin: broad soft wrap so faces never carry a hard crease
     paint = 0.0; soft = 0.14; rim = 0.6;
-  } else if (mt == 22) {    // glasses acetate: flat, clean, no brush strokes
+  } else if ((HAS(22) && mt == 22)) {    // glasses acetate: flat, clean, no brush strokes
     paint = 0.0; soft = 0.02; rim = 0.0;
-  } else if (mt == 8) {     // cloth
+  } else if ((HAS(8) && mt == 8)) {     // cloth
     paint = 0.6; rim = 0.7;
-  } else if (mt == 9) {     // bark / weathered wood
+  } else if ((HAS(9) && mt == 9)) {     // bark / weathered wood
     base *= 0.85 + 0.25 * vnoise(vec2(atan(vObj.x, vObj.z) * 3.0, vWPos.y * 0.7) * 2.0);
     paint = 1.2;
-  } else if (mt == 10) {    // painted metal / signs
+  } else if ((HAS(10) && mt == 10)) {    // painted metal / signs
     paint = 0.3; rim = 0.5;
-  } else if (mt == 26 || mt == 29) { // chrome / glossy enamel: finished after the toon pass
-    paint = mt == 26 ? 0.0 : 0.2; rim = 0.3; soft = 0.02;
-  } else if (mt == 27) {    // lamp lens: glassy by day, glows with uLamp
+  } else if ((HAS(26) && mt == 26) || (HAS(29) && mt == 29)) { // chrome / glossy enamel: finished after the toon pass
+    paint = (HAS(26) && mt == 26) ? 0.0 : 0.2; rim = 0.3; soft = 0.02;
+  } else if ((HAS(27) && mt == 27)) {    // lamp lens: glassy by day, glows with uLamp
     float fr = 1.0 - max(dot(N, normalize(cameraPosition - vWPos)), 0.0);
     base = mix(base, vec3(0.92, 0.93, 0.9), 0.25 + 0.5 * fr * fr);
     emis = vec3(1.0, 0.84, 0.55) * uLamp * 2.6;
     paint = 0.0; rim = 0.0;
-  } else if (mt == 28) {    // spokes (uv.y 0) giving way to a soft motion-blur disc (uv.y 1) with speed
+  } else if ((HAS(28) && mt == 28)) {    // spokes (uv.y 0) giving way to a soft motion-blur disc (uv.y 1) with speed
     if (vUv.y > 0.5) {
       float r = length(vObj.yz);
       gAlpha = uBlur * (0.24 + 0.05 * smoothstep(0.08, 0.26, r));
@@ -514,48 +521,48 @@ void main(){
     } else gAlpha = 1.0 - uBlur;
     if (gAlpha < 0.03) discard;
     paint = 0.0; rim = 0.4; soft = 0.02;
-  } else if (mt == 11) {    // ground: grass meadow paint
+  } else if ((HAS(11) && mt == 11)) {    // ground: grass meadow paint
     float n = fbm2(vWPos.xz * 0.11);
     float fl = hash12(floor(vWPos.xz * 2.3));
     base *= 0.82 + 0.36 * n;
     base = mix(base, base * vec3(1.2, 1.2, 0.8), step(0.93, fl) * 0.5);
     paint = 1.6; rim = 0.0;
-  } else if (mt == 12) {    // butterfly (bright, unshaded)
+  } else if ((HAS(12) && mt == 12)) {    // butterfly (bright, unshaded)
     gColor = vec4(applyFog(base * 0.92, vWPos), 1.0);
     gNormal = vec4(0.5, 0.5, uId / 32.0, -1.0);
     return;
-  } else if (mt == 13) {    // stone
+  } else if ((HAS(13) && mt == 13)) {    // stone
     base *= 0.8 + 0.35 * vnoise(vWPos.xz * 4.0 + vWPos.y * 3.0);
     paint = 1.4;
-  } else if (mt == 23 || mt == 24) { // painted signage from the atlas; 24 = lit (vending, phone)
+  } else if ((HAS(23) && mt == 23) || (HAS(24) && mt == 24)) { // painted signage from the atlas; 24 = lit (vending, phone)
     vec4 sg = texture(uSignTex, vUv);
     if (sg.a < 0.5) discard;
     base = sg.rgb * vCol;
     paint = 0.12; rim = 0.3; soft = 0.05;
-    if (mt == 24) emis = base * 0.28;
+    if ((HAS(24) && mt == 24)) emis = base * 0.28;
     // Dusk: lit panels (vending, phone) glow; painted shop signs catch a little lamplight.
-    gEmit = base * uNight * (mt == 24 ? 0.7 : 0.18);
-  } else if (mt == 25) {    // plaster: rain streaks under the eaves, grime toward the ground
+    gEmit = base * uNight * ((HAS(24) && mt == 24) ? 0.7 : 0.18);
+  } else if ((HAS(25) && mt == 25)) {    // plaster: rain streaks under the eaves, grime toward the ground
     vec2 tg = normalize(vec2(-N.z, N.x) + 1e-4);
     float sx = dot(vWPos.xz, tg);
     float st = vnoise(vec2(sx * 7.0, vWPos.y * 0.35)) * vnoise(vec2(sx * 2.3 + 4.0, 1.0));
     base *= 1.0 - 0.16 * smoothstep(0.3, 0.6, st) * aaKeep(sx * 7.0);
     base *= mix(0.84, 1.0, smoothstep(0.2, 1.4, vObj.y));
     paint = 0.7;
-  } else if (mt == 14) {    // paper lantern (soft, never a lamp in daylight)
+  } else if ((HAS(14) && mt == 14)) {    // paper lantern (soft, never a lamp in daylight)
     emis = base * 0.18;
     // Albedo-driven: paper lanterns bloom, dark shop interiors stay a warm dim glow.
     gEmit = (base * 2.2 + vec3(0.26, 0.14, 0.05)) * uNight;
     paint = 0.3;
-  } else if (mt == 15) {    // hair: strand highlights
+  } else if ((HAS(15) && mt == 15)) {    // hair: strand highlights
     float s = vnoise(vec2(atan(vObj.x, vObj.z) * 9.0, vObj.y * 3.0));
     base *= 0.85 + 0.3 * s;
     paint = 0.3; rim = 1.4; soft = 0.02;
-  } else if (mt == 16) {    // yellow/black pole guard
+  } else if ((HAS(16) && mt == 16)) {    // yellow/black pole guard
     float st = aaStep(0.5, fract(vWPos.y * 2.2 + atan(vObj.x, vObj.z) * 0.16));
     base = mix(vec3(0.02, 0.02, 0.02), vec3(0.9, 0.62, 0.04), st);
     paint = 0.3;
-  } else if (mt == 18) {    // light mote
+  } else if ((HAS(18) && mt == 18)) {    // light mote
     vec2 d = vUv - 0.5;
     float a = 1.0 - smoothstep(0.2, 0.5, length(d));
     if (a < 0.5) discard;
@@ -567,12 +574,12 @@ void main(){
     gColor = vec4(vec3(1.0, 0.9, 0.62) * 1.02 * uWorldTint, 1.0);
     gNormal = vec4(0.5, 0.5, uId / 32.0, -1.0);
     return;
-  } else if (mt == 31) {    // stone-lantern fire box: dark by day, a warm flame at dusk
+  } else if ((HAS(31) && mt == 31)) {    // stone-lantern fire box: dark by day, a warm flame at dusk
     gEmit = vec3(1.0, 0.58, 0.24) * uNight * 2.2;
-  } else if (mt == 30) {    // lamp / vending / sign panel: plain paint by day, lit at night
+  } else if ((HAS(30) && mt == 30)) {    // lamp / vending / sign panel: plain paint by day, lit at night
     paint = 0.3; rim = 0.5;
     gEmit = mix(base, vec3(1.0, 0.93, 0.8), 0.35) * uNight * 1.3;
-  } else if (mt == 19) {    // painted distant mountains: authored colour, soft top-lit gradient
+  } else if ((HAS(19) && mt == 19)) {    // painted distant mountains: authored colour, soft top-lit gradient
     float h = clamp(vObj.y / 160.0, 0.0, 1.0);
     vec3 c = base * (0.9 + 0.18 * h) * (0.94 + 0.12 * brush(vWPos * 0.05, N));
     vec3 V = normalize(vWPos - cameraPosition);
@@ -584,10 +591,10 @@ void main(){
 
   // Skin shades warm (peach/rose) instead of the cool environment shadow.
   // Skin shades to a soft pink-lavender instead of the cool environment shadow.
-  vec3 shT = mt == 7 ? vec3(0.86, 0.68, 0.74) : uShadowTint;
-  if (mt == 7) jit += 0.34;
+  vec3 shT = (HAS(7) && mt == 7) ? vec3(0.86, 0.68, 0.74) : uShadowTint;
+  if ((HAS(7) && mt == 7)) jit += 0.34;
   vec3 col = toonT(base, N, vWPos, jit, paint, rim, soft, shT) + emis;
-  if (mt == 26 || mt == 29) {
+  if ((HAS(26) && mt == 26) || (HAS(29) && mt == 29)) {
     // Faked reflections: no env map, just the sky gradient over a dark ground with a crisp horizon
     // (chrome), or a sun-and-sky highlight streak (enamel). Bands thinner than a pixel fade out
     // instead of sparkling along thin tubes.
@@ -597,7 +604,7 @@ void main(){
     float L = clamp(dot(col, vec3(0.2126, 0.7152, 0.0722)) / max(lumB, 1e-4), 0.0, 1.0);
     float fw = max(fwidth(R.y), 1e-4);
     float keep = clamp(0.05 / fw, 0.0, 1.0);
-    if (mt == 26) {
+    if ((HAS(26) && mt == 26)) {
       vec3 sky = mix(uSkyHorizon, uSkyMid, smoothstep(0.08, 0.6, R.y));
       sky = mix(sky, uSkyZenith, smoothstep(0.6, 1.0, R.y));
       // Silver, not teal: the sky only tints the reflection.
@@ -618,7 +625,7 @@ void main(){
       col = mix(col, vec3(0.97, 0.93, 0.88), hi * mix(0.35, 0.8, L));
     }
   }
-  if (mt == 1) {
+  if ((HAS(1) && mt == 1)) {
     // Canopy palette over the probe's light response: deep blue-green core (#1b3a2a), near-black
     // band on the far side (#10211d), sunlit clusters (#4f7d3a) only on the sun-facing upper shell.
     vec3 Lr = col * 4.0;
@@ -673,9 +680,12 @@ export function uberWith(id: number, mask: number, extra: Record<string, THREE.I
   });
 }
 
-/** Shared toon material. `id` = outline group (edges drawn between groups), `mask` = line weight. */
-export function uber(id: number, mask = 1, side: THREE.Side = THREE.FrontSide): THREE.ShaderMaterial {
-  const key = `${id}|${mask}|${side}`;
+/**
+ * Shared toon material. `id` = outline group (edges drawn between groups), `mask` = line weight,
+ * `mts` = bit set of surface ids (M.*) the geometry uses (0 = all; see specializeUber).
+ */
+export function uber(id: number, mask = 1, side: THREE.Side = THREE.FrontSide, mts = 0): THREE.ShaderMaterial {
+  const key = `${id}|${mask}|${side}|${mts >>> 0}`;
   let m = uberCache.get(key);
   if (!m) {
     m = new THREE.ShaderMaterial({
@@ -683,13 +693,52 @@ export function uber(id: number, mask = 1, side: THREE.Side = THREE.FrontSide): 
       uniforms: { ...G, uId: { value: id }, uMask: { value: mask } },
       vertexShader: UBER_VS,
       fragmentShader: UBER_FS,
+      defines: mts ? { MT_MASK_V: `0x${(mts >>> 0).toString(16)}u` } : {},
       vertexColors: true,
       side,
       alphaToCoverage: true,
     });
+    m.userData.uber = { id, mask, side };
     uberCache.set(key, m);
   }
   return m;
+}
+
+/** Bit set of the surface ids (aMat) a geometry carries. */
+export function surfaceBits(g: THREE.BufferGeometry): number {
+  const a = g.attributes.aMat as THREE.BufferAttribute | undefined;
+  if (!a) return 0xffffffff;
+  let bits = 0;
+  for (let i = 0; i < a.count; i++) bits |= 1 << Math.round(a.getX(i));
+  return bits >>> 0;
+}
+
+/**
+ * Swap every generic uber material under `root` for a variant compiled with only the surface
+ * branches its meshes use. One variant per material (union over all meshes sharing it), so the
+ * program count stays small. `extra(o)` can add geometries a mesh may switch to (LODs).
+ */
+export function specializeUber(root: THREE.Object3D, extra?: (o: THREE.Mesh) => THREE.BufferGeometry[]): number {
+  const users = new Map<THREE.ShaderMaterial, { bits: number; meshes: THREE.Mesh[] }>();
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const mat = m.material as THREE.ShaderMaterial;
+    if (!mat?.userData?.uber || mat.defines?.MT_MASK_V) return;
+    const e = users.get(mat) ?? { bits: 0, meshes: [] };
+    e.bits |= surfaceBits(m.geometry);
+    for (const g of extra?.(m) ?? []) e.bits |= surfaceBits(g);
+    e.meshes.push(m);
+    users.set(mat, e);
+  });
+  for (const [mat, e] of users) {
+    const { id, mask, side } = mat.userData.uber;
+    // Leaf cards (17, 21) continue down the foliage (1) branch.
+    if (e.bits & ((1 << 17) | (1 << 21))) e.bits |= 1 << 1;
+    const v = uber(id, mask, side, e.bits | 1);
+    for (const m of e.meshes) m.material = v;
+  }
+  return users.size;
 }
 
 /** Depth-only material for the sun shadow pass (instancing-aware, leaf cards alpha-cut). */

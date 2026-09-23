@@ -18,6 +18,8 @@ import { leafAtlas } from "./render/leafAtlas";
 import { signAtlas } from "./render/signAtlas";
 import { TimeOfDay, type Preset } from "./world/timeofday";
 import { Fireflies } from "./world/fireflies";
+import { Profiler } from "./render/profiler";
+import { specializeUber } from "./render/materials";
 
 const params = new URLSearchParams(location.search);
 const AUTOPLAY = params.has("autoplay") && params.get("autoplay") !== "0";
@@ -66,6 +68,7 @@ const world = new World(false);
 const CHUNK_STAGES: Stage[] = ["rice", "houses", "poles", "road"];
 for (let k = 0; k < World.CHUNKS; k++)
   await step(`chunk${k}`, CHUNK_STAGES[Math.floor((k / World.CHUNKS) * CHUNK_STAGES.length)], W_CHUNKS / World.CHUNKS, () => world.addChunk(k));
+if (!params.has("nospec")) world.specialize();
 scene.add(world.root);
 // Created after the world on purpose: opaque draws sort by material id first, and the sky dome must
 // draw after the scenery so early-z rejects most of its pixels.
@@ -91,7 +94,10 @@ const camParam = params.get("cam");
 if (camParam === "fpp") {
   chase.fpp = 1;
 } else if (camParam) chase.mode = camParam as CamMode;
+if (!params.has("nospec")) for (const o of [rider.root, rider.walker, birds.group, fireflies.mesh]) specializeUber(o);
 const post = new Post(renderer, innerWidth, innerHeight, { kuwahara: KUWA, msaa: Number(params.get("msaa") ?? 4) });
+const prof = new Profiler(renderer, params.has("prof"));
+post.prof = prof;
 const MSAA_PINNED = params.has("msaa");
 let msaaStepAt = 0;
 // T cycles afternoon → golden → sunset → dusk; ?time=… picks one, &timelapse=1 sets the sun over 40 s.
@@ -250,7 +256,10 @@ function frame(now: number) {
     birds.shift(L);
   }
   const px = explore.playerX, pz = explore.playerZ;
+  prof.cpuBegin("world");
   world.update(pz);
+  prof.cpuEnd();
+  prof.cpuBegin("rider");
   // Wheels stand on the road surface (0.02 above the ground plane).
   rider.root.position.set(ctl.x, 0.02, ctl.z);
   rider.root.rotation.y = ctl.yaw;
@@ -270,14 +279,22 @@ function frame(now: number) {
     onFoot ? explore.foot : undefined,
   );
   rider.bike.bump(ctl.bumpImpulse);
+  prof.cpuEnd();
+  prof.cpuBegin("camera+tod");
   if (onFoot && chase.mode !== "custom") explore.updateCamera(dt, chase.cam);
   else chase.update(dt, ctl, t, rider);
   sky.follow(chase.cam.position);
   tod.update(dt);
+  prof.cpuEnd();
+  prof.cpuBegin("birds");
   birds.activity = tod.birds;
   birds.update(dt, t, chase.cam, _actor.set(px, 0, pz));
+  prof.cpuEnd();
+  prof.cpuBegin("fireflies");
   fireflies.update(pz, tod.night);
   rider.bike.setLamp(tod.night);
+  prof.cpuEnd();
+  prof.cpuBegin("audio");
   if (audio.state === "running") {
     near = world.closeness(px, pz);
     const u = px - roadX(pz);
@@ -294,6 +311,7 @@ function frame(now: number) {
       evening: tod.evening,
     });
   }
+  prof.cpuEnd();
 
   // Sun shadow frustum centred ~30 m ahead of the rider (where the camera looks).
   if (onFoot) {
@@ -302,10 +320,20 @@ function frame(now: number) {
     shadowCenter.set(px + (shadowCenter.x / l) * 22, 0, pz + (shadowCenter.z / l) * 22);
   } else shadowCenter.set(ctl.x - Math.sin(ctl.yaw) * 30, 0, ctl.z - Math.cos(ctl.yaw) * 30);
   renderer.info.reset();
+  const cpuR = performance.now();
+  prof.begin("shadow", renderer);
   shadow.update(renderer, scene, shadowCenter);
+  prof.end("shadow", renderer);
+  prof.begin("reflection", renderer);
+  world.reflectLod(true);
   reflection.update(renderer, scene, chase.cam, -0.22);
+  world.reflectLod(false);
+  prof.end("reflection", renderer);
   post.setNear(chase.cam.near);
   post.render(scene, chase.cam, t);
+  prof.cpuMark("render submit", performance.now() - cpuR);
+  prof.cpuMark("frame total", performance.now() - now);
+  prof.poll();
 
   hud.textContent = onFoot ? "" : `${Math.round(ctl.speed * 3.6)} km/h`;
   frames++;
@@ -363,6 +391,8 @@ window.__ride = {
   bike: rider.bike,
   post,
   birds,
+  prof,
+  world,
   get msaa() {
     return post.msaa;
   },

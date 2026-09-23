@@ -6,7 +6,7 @@ import type { ShopKind } from "./props";
 import { bambooGrove, farHouse, fence, house, pole, postBox, scarecrow, school, shed, stoneMarker, tree, warningSign, waterTower, type TreeKind } from "./props";
 import { boulder, butterfly, floretCluster, flower, flowerSpike, fringeGrass, grassClump, leafPlant, riceTuft, shortGrass, vergeClump } from "./vegetation";
 import { poleLamp } from "./lights";
-import { roadMaterial, uber, waterMaterial } from "../render/materials";
+import { roadMaterial, specializeUber, uber, waterMaterial } from "../render/materials";
 import { LAYER_REFLECT, LAYER_SHADOW, onLayers } from "../render/lightpasses";
 import { mulberry32, pick, range, type Rng } from "../core/rng";
 
@@ -28,7 +28,12 @@ export interface Chunk {
   k: number;
   group: THREE.Group;
   colliders: Collider[];
+  /** Last LOD distance applied (m). */
+  lodD?: number;
 }
+
+/** Chunks farther than this (nearest edge) swap hero trees for the distant LOD. */
+let TREE_FAR = 130;
 
 // ------------------------------------------------------------------ layout constants
 
@@ -935,25 +940,36 @@ export function buildChunk(k: number): Chunk {
   if (bermG.length) add(mesh(merge(bermG), uber(ID.berm, 0.6)), R);
   if (waterG.length) add(mesh(merge(waterG), waterMaterial()));
   const dbl = THREE.DoubleSide;
-  add(instMesh(P.rice, uber(ID.rice, -1, dbl), rice));
-  add(instMesh(P.fringe, uber(ID.grass, -1, dbl), bermGrass));
-  add(instMesh(P.short, uber(ID.grass, -1, dbl), weeds));
-  for (let i = 0; i < 3; i++) add(instMesh(P.grass[i], uber(ID.grass, -1, dbl), grass[i]));
-  for (let i = 0; i < 3; i++) add(instMesh(P.verge[i], uber(ID.grass, -1, dbl), verge[i]));
-  add(instMesh(P.flower, uber(ID.flower, -1, dbl), flowers));
-  add(instMesh(P.fly, uber(ID.butterfly, -1, dbl), flies));
-  add(instMesh(P.spike, uber(ID.flower, -1, dbl), spikes));
+  /** Sub-pixel beyond `d` metres (fog + distance): the chunk drops it (see World.update). */
+  const fine = (o: THREE.Object3D | null, d: number, ...layers: number[]) => {
+    if (o) o.userData.cull = d;
+    add(o, ...layers);
+  };
+  fine(instMesh(P.rice, uber(ID.rice, -1, dbl), rice), 170);
+  fine(instMesh(P.fringe, uber(ID.grass, -1, dbl), bermGrass), 170);
+  fine(instMesh(P.short, uber(ID.grass, -1, dbl), weeds), 130);
+  for (let i = 0; i < 3; i++) fine(instMesh(P.grass[i], uber(ID.grass, -1, dbl), grass[i]), 170);
+  for (let i = 0; i < 3; i++) fine(instMesh(P.verge[i], uber(ID.grass, -1, dbl), verge[i]), 170);
+  fine(instMesh(P.flower, uber(ID.flower, -1, dbl), flowers), 120);
+  fine(instMesh(P.fly, uber(ID.butterfly, -1, dbl), flies), 120);
+  fine(instMesh(P.spike, uber(ID.flower, -1, dbl), spikes), 120);
   const plantMat = uber(ID.tree, -1, dbl);
-  for (let i = 0; i < 2; i++) add(instMesh(P.lance[i], plantMat, lance[i]), S);
-  for (let i = 0; i < 2; i++) add(instMesh(P.broad[i], plantMat, broad[i]), S);
-  for (let i = 0; i < 4; i++) add(instMesh(P.florets[i], uber(ID.flower, -1, dbl), florets[i]));
-  add(instMesh(P.hydrangea, uber(ID.flower, -1, dbl), hyd));
+  for (let i = 0; i < 2; i++) fine(instMesh(P.lance[i], plantMat, lance[i]), 150, S);
+  for (let i = 0; i < 2; i++) fine(instMesh(P.broad[i], plantMat, broad[i]), 150, S);
+  for (let i = 0; i < 4; i++) fine(instMesh(P.florets[i], uber(ID.flower, -1, dbl), florets[i]), 120);
+  fine(instMesh(P.hydrangea, uber(ID.flower, -1, dbl), hyd), 150);
   for (let i = 0; i < 2; i++) add(instMesh(P.rocks[i], uber(ID.fence, 1), rocks[i]), S);
   const treeMat = uber(ID.tree, 0.8, dbl);
   for (const [key, list] of Object.entries(trees)) {
     const kind = key.slice(0, -1) as TreeKind;
     const vi = Number(key.slice(-1));
-    add(instMesh(P.trees[kind][vi], treeMat, list), S, R);
+    const im = instMesh(P.trees[kind][vi], treeMat, list);
+    if (im) {
+      // Leaf-card hero tree up close, the multi-lobe distant LOD far away and in the paddy mirror.
+      im.userData.near = im.geometry;
+      im.userData.far = P.far[kind][vi % P.far[kind].length];
+    }
+    add(im, S, R);
   }
   for (const [key, list] of Object.entries(farTrees)) {
     const kind = key.slice(0, -1) as TreeKind;
@@ -988,7 +1004,37 @@ export class World {
       const zc = -(c.k + 0.5) * CHUNK;
       const n = Math.ceil((zc - top) / L);
       c.group.position.z = -n * L;
+      // Distance from the player to the chunk's nearest edge drives its level of detail.
+      const z0 = -c.k * CHUNK - n * L, z1 = z0 - CHUNK;
+      const d = pz < z1 ? z1 - pz : pz > z0 ? pz - z0 : 0;
+      if (d === c.lodD) continue;
+      c.lodD = d;
+      for (const o of c.group.children) {
+        const u = o.userData;
+        if (u.cull !== undefined) o.visible = d < u.cull;
+        else if (u.far) (o as THREE.Mesh).geometry = d > TREE_FAR ? u.far : u.near;
+      }
     }
+  }
+
+  /** Compile-time specialise the chunk materials to the surfaces they draw (after building). */
+  specialize(): number {
+    return specializeUber(this.root, (o) => (o.userData.far ? [o.userData.far] : []));
+  }
+
+  /** Tuning hook: LOD distance for hero trees (forces a refresh). */
+  setTreeFar(d: number): void {
+    TREE_FAR = d;
+    for (const c of this.chunks) c.lodD = undefined;
+  }
+
+  /** Paddy mirror: every tree draws its distant LOD (the reflection is half-res and rippled). */
+  reflectLod(on: boolean): void {
+    for (const c of this.chunks)
+      for (const o of c.group.children) {
+        const u = o.userData;
+        if (u.far) (o as THREE.Mesh).geometry = on || (c.lodD ?? 0) > TREE_FAR ? u.far : u.near;
+      }
   }
 
   /** Deepest circle-collider penetration at (x, z) in world space (0 = clear). */

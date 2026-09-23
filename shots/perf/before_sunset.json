@@ -1,0 +1,90 @@
+{
+ "fps": [
+  56,
+  60,
+  58,
+  56,
+  57,
+  60,
+  63,
+  63,
+  63,
+  64,
+  61,
+  61,
+  59,
+  57,
+  55,
+  55,
+  57,
+  58,
+  61,
+  62,
+  63,
+  59,
+  54,
+  59,
+  58,
+  60,
+  60,
+  52,
+  58,
+  55,
+  54,
+  53,
+  59,
+  59,
+  59,
+  59,
+  58,
+  58,
+  58
+ ],
+ "msaa": 4,
+ "prof": {
+  "gpuMs": {
+   "shadow": 0.476,
+   "reflection": 3.725,
+   "scene": 12.073,
+   "ink+kuwahara": 0.367,
+   "bloom": 0.184,
+   "grade": 0.143,
+   "sharpen": 0.062
+  },
+  "cpuMs": {
+   "world": 0.001,
+   "rider": 0.176,
+   "camera+tod": 0.016,
+   "birds": 0.047,
+   "fireflies": 0.002,
+   "audio": 0,
+   "render submit": 3.292,
+   "frame total": 5.373
+  },
+  "calls": {
+   "shadow": 330.901,
+   "reflection": 186.232,
+   "scene": 624.802,
+   "ink+kuwahara": 1,
+   "bloom": 13,
+   "grade": 1,
+   "sharpen": 1
+  },
+  "tris": {
+   "shadow": 746191.563,
+   "reflection": 2031799.695,
+   "scene": 3699278.428,
+   "ink+kuwahara": 1,
+   "bloom": 13,
+   "grade": 1,
+   "sharpen": 1
+  }
+ },
+ "info": {},
+ "summary": {
+  "avg": 58.5,
+  "min": 52,
+  "p10": 54,
+  "msaaEnd": 4
+ }
+}

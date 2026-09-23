@@ -4,6 +4,7 @@ import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
 import { TOD_GRADE } from "./todUniforms";
+import type { Profiler } from "./profiler";
 
 const FS_VS = /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 
@@ -19,6 +20,8 @@ export class Post {
   private smaa: SMAAPass;
   private sharpen: ShaderPass;
   readonly bloom: UnrealBloomPass;
+  prof: Profiler | null = null;
+  private wrapped = false;
   sceneCalls = 0;
   sceneTris = 0;
 
@@ -230,9 +233,25 @@ export class Post {
 
   render(scene: THREE.Scene, camera: THREE.Camera, time: number): void {
     const c0 = this.renderer.info.render.calls, t0 = this.renderer.info.render.triangles;
-    this.renderer.setRenderTarget(this.mrt);
-    this.renderer.clear();
-    this.renderer.render(scene, camera);
+    const pf = this.prof?.on ? this.prof : null;
+    if (pf && !this.wrapped) {
+      this.wrapped = true;
+      const names = ["ink+kuwahara", "bloom", "grade", "smaa", "sharpen"];
+      this.composer.passes.forEach((p, i) => {
+        const r = p.render.bind(p);
+        p.render = (...a: Parameters<typeof r>) => {
+          pf.begin(names[i] ?? `pass${i}`, this.renderer);
+          r(...a);
+          pf.end(names[i] ?? `pass${i}`, this.renderer);
+        };
+      });
+    }
+    pf?.begin("scene", this.renderer);
+    const rd = this.renderer;
+    rd.setRenderTarget(this.mrt);
+    rd.clear();
+    rd.render(scene, camera);
+    pf?.end("scene", this.renderer);
     this.sceneCalls = this.renderer.info.render.calls - c0;
     this.sceneTris = this.renderer.info.render.triangles - t0;
     this.renderer.setRenderTarget(null);
