@@ -52,7 +52,7 @@ On foot:
 
 She can wander the verges, the village lots around the houses and the paddy banks (not the
 water), but not through houses, poles, trunks or fences. The bike stays parked on its kickstand
-where she left it; if she's more than 60 m away, F wheels it over to the road edge nearest her.
+where she left it; if she's out of reach (more than ~2 m away), F wheels it over to the road edge beside her and she gets on.
 
 Audio starts on the first click or key press (browser autoplay rules).
 

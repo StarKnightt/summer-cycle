@@ -16,8 +16,8 @@ import { clamp, damp } from "../core/rng";
  *
  * The same character mesh is used: the body is re-parented from the bike to `rider.walker` and
  * blended limb by limb between the seated and standing poses. While she walks the bike stays
- * parked on its kickstand where she left it; chunk streaming follows her. Pressing F more than
- * 60 m away from the bike wheels it over: it reappears parked at the road edge nearest to her.
+ * parked on its kickstand where she left it; chunk streaming follows her. Pressing F out of reach
+ * (> 2.2 m) wheels it over: it reappears parked at the road edge beside her, and she gets on.
  */
 export type FootMode = "ride" | "braking" | "dismount" | "walk" | "approach" | "mount";
 
@@ -25,7 +25,6 @@ const WALK = 1.3;
 const RUN = 3.0;
 const BODY_R = 0.24;
 const MOUNT_RANGE = 2.2;
-const SUMMON_RANGE = 60;
 const DISMOUNT_T = 1.0;
 const MOUNT_T = 0.9;
 /** Where she stands beside the bike (bike-local): to the side of the saddle, a touch forward of it. */
@@ -282,7 +281,7 @@ export class Explore {
         return;
       case "walk": {
         const d = this.bikeDistance;
-        if (d > SUMMON_RANGE) this.summon();
+        if (d > MOUNT_RANGE) this.summon();
         if (this.bikeDistance < MOUNT_RANGE) this.startApproach();
         return;
       }

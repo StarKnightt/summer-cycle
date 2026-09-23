@@ -134,9 +134,11 @@ function adaptAA(interval: number): void {
     const s = [...AA.calib].sort((a, b) => a - b);
     const med = s[Math.floor(s.length / 2)], p10 = s[Math.floor(s.length * 0.1)];
     const tight = (med - p10) / med < 0.1;
-    const hz = (tight && REFRESH_HZ.find((h) => Math.abs(1000 / h - med) / (1000 / h) < 0.08)) || 60;
+    const snap = REFRESH_HZ.find((h) => Math.abs(1000 / h - med) / (1000 / h) < 0.08);
+    // Under ~12 ms the display (or an uncapped browser) is high-refresh however jittery the frames.
+    const hz = med < 12 ? (snap ?? 1000 / med) : (tight && snap) || 60;
     AA.refresh = 1000 / hz;
-    AA.log.push(`refresh ${hz} Hz (median ${med.toFixed(2)} ms, p10 ${p10.toFixed(2)}${tight ? "" : ", loose -> 60"})`);
+    AA.log.push(`refresh ${Math.round(hz)} Hz (median ${med.toFixed(2)} ms, p10 ${p10.toFixed(2)}${med >= 12 && !tight ? ", loose -> 60" : ""})`);
     return;
   }
   AA.win.push(interval);

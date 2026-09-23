@@ -10,7 +10,7 @@ const L_FREE = 0.1;
 const L_RUB = 0.14;
 const L_SQUEAL = 0.012;
 const L_RATTLE = 0.24;
-const L_BELL = 0.2;
+const L_BELL = 0.4;
 
 const TEETH = 33; // chainring teeth → chain mesh rate
 const PAWL_CLICKS = 16; // freewheel clicks per wheel revolution
@@ -171,7 +171,7 @@ export class BikeLayer extends Layer {
     const sp = clamp(s.speed / 10, 0, 1.2);
     if (b) k.play(b, when, { gain: L_RATTLE * clamp(strength, 0, 1.5) * (0.35 + 0.65 * sp), pan: rr(k.rng, -0.12, 0.12), rate: rr(k.rng, 0.93, 1.07), dest: this.out });
     const t = k.pick("tink");
-    if (t && k.rng() < 0.25) k.play(t, when + 0.012, { gain: L_BELL * 0.1 * strength, pan: 0.05, dest: this.out });
+    if (t && k.rng() < 0.25) k.play(t, when + 0.012, { gain: 0.02 * strength, pan: 0.05, dest: this.out });
   }
 
   ringBell(when: number): void {

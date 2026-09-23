@@ -374,6 +374,20 @@ try {
     ok("remount after summon", (await state()).mode === "ride", (await state()).mode);
     await wait(3000);
     await shot("10_riding_after_summon");
+    // Mid range (2.2–60 m): F also wheels the bike over beside her, then she gets on.
+    await page.keyboard.press("KeyF");
+    await page.waitForFunction(() => window.__ride.explore.state.mode === "walk", null, { timeout: 15000 }).catch(() => {});
+    await R(() => window.__ride.explore.walk(0, -1, true));
+    await wait(3000);
+    await R(() => window.__ride.explore.walk(0, 0));
+    await wait(500);
+    const s3 = await state();
+    await page.keyboard.press("KeyF");
+    await wait(400);
+    const s4 = await state();
+    ok("F at mid range summons the bike", s3.bikeDist > 2.2 && s3.bikeDist < 60 && s4.bikeDist < 3, `before=${s3.bikeDist.toFixed(1)} m after=${s4.bikeDist.toFixed(2)} m`);
+    await page.waitForFunction(() => window.__ride.explore.state.mode === "ride", null, { timeout: 8000 }).catch(() => {});
+    ok("remount after mid-range summon", (await state()).mode === "ride", (await state()).mode);
   }
 
   const log = await R(() => window.__ride.fpsLog);
