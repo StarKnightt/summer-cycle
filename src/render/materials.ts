@@ -174,12 +174,14 @@ float shadowVis(vec3 wpos, vec3 N){
 }
 
 // Three-step cel lighting (lit / shadow / dark shadow), painterly terminator, rim light.
+// Set by the skin branch: one crisp cel step on the form, but cast shadows (hair) stay soft.
+float gSoftCast = 0.0;
 vec3 toonT(vec3 base, vec3 N, vec3 wpos, float jitter, float paint, float rimAmt, float soft, vec3 shTint){
   float br = brush(wpos, N);
   float t = dot(N, uSunDir) + (br - 0.5) * 0.32 * paint + jitter;
   float sv = shadowVis(wpos, N);
   // Skin (the only very soft material): cast shadows from hair/cap fall softly, no hard seams.
-  if (soft > 0.12) sv = mix(sv, 1.0, 0.45);
+  if (soft > 0.12 || gSoftCast > 0.5) sv = mix(sv, 1.0, 0.45);
   float lit = smoothstep(0.02 - soft, 0.06 + soft, t) * sv;
   float mid = smoothstep(-0.5 - soft, -0.44 + soft, t);
   vec3 cLit = base * uSunColor;
@@ -505,8 +507,8 @@ void main(){
     base *= 1.0 + smoothstep(0.5, 1.0, wv) * clamp(vObj.y * 1.3 - 0.25, 0.0, 1.0) * 0.28;
     paint = 0.8; rim = 0.7; soft = 0.06;
     mask = -1.0;
-  } else if ((HAS(7) && mt == 7)) {     // skin: broad soft wrap so faces never carry a hard crease
-    paint = 0.0; soft = 0.14; rim = 0.6;
+  } else if ((HAS(7) && mt == 7)) {     // skin: a single clean cel step, soft cast shadows
+    paint = 0.0; soft = 0.065; rim = 0.5; gSoftCast = 1.0;
   } else if ((HAS(22) && mt == 22)) {    // glasses acetate: flat, clean, no brush strokes
     paint = 0.0; soft = 0.02; rim = 0.0;
   } else if ((HAS(8) && mt == 8)) {     // cloth
@@ -602,7 +604,7 @@ void main(){
 
   // Skin shades warm (peach/rose) instead of the cool environment shadow.
   // Skin shades to a soft pink-lavender instead of the cool environment shadow.
-  vec3 shT = (HAS(7) && mt == 7) ? vec3(0.86, 0.68, 0.74) : uShadowTint;
+  vec3 shT = (HAS(7) && mt == 7) ? vec3(0.9, 0.75, 0.7) : uShadowTint;
   if ((HAS(7) && mt == 7)) jit += 0.34;
   vec3 col = toonT(base, N, vWPos, jit, paint, rim, soft, shT) + emis;
   if ((HAS(26) && mt == 26) || (HAS(29) && mt == 29)) {
