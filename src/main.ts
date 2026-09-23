@@ -124,6 +124,9 @@ const input = new Input(
 );
 // B = bicycle bell, M = mute (both also count as the first gesture that starts audio).
 audio.bindKeys();
+addEventListener("keydown", (e) => {
+  if (e.code === "KeyB" && !e.repeat) rider.bike.ringBell();
+});
 
 const hud = document.getElementById("hud")!;
 if (AUTOPLAY || params.has("nohud")) hud.style.display = "none";
@@ -203,7 +206,8 @@ function frame(now: number) {
   }
   const px = explore.playerX, pz = explore.playerZ;
   world.update(pz);
-  rider.root.position.set(ctl.x, 0, ctl.z);
+  // Wheels stand on the road surface (0.02 above the ground plane).
+  rider.root.position.set(ctl.x, 0.02, ctl.z);
   rider.root.rotation.y = ctl.yaw;
   const onFoot = explore.onFoot;
   rider.update(
@@ -220,7 +224,8 @@ function frame(now: number) {
     },
     onFoot ? explore.foot : undefined,
   );
-  if (onFoot) explore.updateCamera(dt, chase.cam);
+  rider.bike.bump(ctl.bumpImpulse);
+  if (onFoot && chase.mode !== "custom") explore.updateCamera(dt, chase.cam);
   else chase.update(dt, ctl, t, rider);
   sky.follow(chase.cam.position);
   tod.update(dt);
@@ -305,6 +310,7 @@ declare global {
 }
 window.__ride = {
   scene,
+  bike: rider.bike,
   post,
   birds,
   get msaa() {

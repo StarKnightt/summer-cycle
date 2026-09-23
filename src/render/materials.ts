@@ -336,6 +336,9 @@ in vec3 vCol;
 in vec2 vUv;
 in vec3 vObj;
 flat in int vMat;
+// Per-material extras (see uberWith): bike lamp glow, spoke motion blur.
+uniform float uLamp;
+uniform float uBlur;
 
 vec2 cellular(vec2 p){
   vec2 i = floor(p), f = fract(p); float d = 8.0; vec2 best = vec2(0.0);
@@ -495,6 +498,22 @@ void main(){
     paint = 1.2;
   } else if (mt == 10) {    // painted metal / signs
     paint = 0.3; rim = 0.5;
+  } else if (mt == 26 || mt == 29) { // chrome / glossy enamel: finished after the toon pass
+    paint = mt == 26 ? 0.0 : 0.2; rim = 0.3; soft = 0.02;
+  } else if (mt == 27) {    // lamp lens: glassy by day, glows with uLamp
+    float fr = 1.0 - max(dot(N, normalize(cameraPosition - vWPos)), 0.0);
+    base = mix(base, vec3(0.92, 0.93, 0.9), 0.25 + 0.5 * fr * fr);
+    emis = vec3(1.0, 0.84, 0.55) * uLamp * 2.6;
+    paint = 0.0; rim = 0.0;
+  } else if (mt == 28) {    // spokes (uv.y 0) giving way to a soft motion-blur disc (uv.y 1) with speed
+    if (vUv.y > 0.5) {
+      float r = length(vObj.yz);
+      gAlpha = uBlur * (0.24 + 0.05 * smoothstep(0.08, 0.26, r));
+      N = normalize(mix(N, vec3(0.0, 1.0, 0.0), 0.5));
+      mask = -1.0;
+    } else gAlpha = 1.0 - uBlur;
+    if (gAlpha < 0.03) discard;
+    paint = 0.0; rim = 0.4; soft = 0.02;
   } else if (mt == 11) {    // ground: grass meadow paint
     float n = fbm2(vWPos.xz * 0.11);
     float fl = hash12(floor(vWPos.xz * 2.3));
@@ -568,6 +587,37 @@ void main(){
   vec3 shT = mt == 7 ? vec3(0.86, 0.68, 0.74) : uShadowTint;
   if (mt == 7) jit += 0.34;
   vec3 col = toonT(base, N, vWPos, jit, paint, rim, soft, shT) + emis;
+  if (mt == 26 || mt == 29) {
+    // Faked reflections: no env map, just the sky gradient over a dark ground with a crisp horizon
+    // (chrome), or a sun-and-sky highlight streak (enamel). Bands thinner than a pixel fade out
+    // instead of sparkling along thin tubes.
+    vec3 V = normalize(cameraPosition - vWPos);
+    vec3 R = reflect(-V, N);
+    float lumB = dot(base * uSunColor, vec3(0.2126, 0.7152, 0.0722));
+    float L = clamp(dot(col, vec3(0.2126, 0.7152, 0.0722)) / max(lumB, 1e-4), 0.0, 1.0);
+    float fw = max(fwidth(R.y), 1e-4);
+    float keep = clamp(0.05 / fw, 0.0, 1.0);
+    if (mt == 26) {
+      vec3 sky = mix(uSkyHorizon, uSkyMid, smoothstep(0.08, 0.6, R.y));
+      sky = mix(sky, uSkyZenith, smoothstep(0.6, 1.0, R.y));
+      // Silver, not teal: the sky only tints the reflection.
+      sky = mix(vec3(dot(sky, vec3(0.2126, 0.7152, 0.0722))), sky, 0.45) * 1.08;
+      vec3 env = mix(vec3(0.2, 0.175, 0.15) * (0.75 + 0.25 * smoothstep(-0.8, 0.0, R.y)), sky, smoothstep(-fw, fw, R.y + 0.02));
+      float band = 1.0 - smoothstep(0.045, 0.045 + fw * 1.5, abs(R.y - 0.09));
+      env += vec3(1.0, 0.97, 0.9) * band * keep * 0.7;
+      col = env * base * mix(0.5, 1.0, L);
+      float sd = dot(R, uSunDir);
+      float sfw = max(fwidth(sd), 1e-4);
+      col += vec3(1.0, 0.95, 0.85) * smoothstep(0.975 - sfw, 0.975 + sfw, sd) * L * keep * 0.8;
+    } else {
+      vec3 S = normalize(uSunDir + vec3(0.0, 0.7, 0.0));
+      float sd = dot(R, S);
+      float sfw = max(fwidth(sd), 1e-4);
+      float hi = smoothstep(0.93 - sfw, 0.93 + sfw, sd) * clamp(0.04 / sfw, 0.0, 1.0);
+      col += base * uSkyMid * 0.35 * smoothstep(0.1, 0.9, R.y);
+      col = mix(col, vec3(0.97, 0.93, 0.88), hi * mix(0.35, 0.8, L));
+    }
+  }
   if (mt == 1) {
     // Canopy palette over the probe's light response: deep blue-green core (#1b3a2a), near-black
     // band on the far side (#10211d), sunlit clusters (#4f7d3a) only on the sun-facing upper shell.
@@ -607,6 +657,21 @@ void main(){
 `;
 
 const uberCache = new Map<string, THREE.ShaderMaterial>();
+
+/**
+ * Uncached uber material with its own extra uniforms (e.g. uLamp, uBlur) for a single object;
+ * the shared G uniforms stay shared, so it compiles to the same program as `uber`.
+ */
+export function uberWith(id: number, mask: number, extra: Record<string, THREE.IUniform>): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    uniforms: { ...G, uId: { value: id }, uMask: { value: mask }, ...extra },
+    vertexShader: UBER_VS,
+    fragmentShader: UBER_FS,
+    vertexColors: true,
+    alphaToCoverage: true,
+  });
+}
 
 /** Shared toon material. `id` = outline group (edges drawn between groups), `mask` = line weight. */
 export function uber(id: number, mask = 1, side: THREE.Side = THREE.FrontSide): THREE.ShaderMaterial {
@@ -651,6 +716,7 @@ export function shadowDepthMaterial(): THREE.ShaderMaterial {
       layout(location = 0) out vec4 o;
       void main(){
         if (vMat == 17 && texture(uLeafTex, vUv).a < 0.5) discard;
+        if (vMat == 28 && vUv.y > 0.5) discard; // spoke motion-blur disc casts no shadow
         o = vec4(1.0);
       }`,
   });
