@@ -2,8 +2,8 @@ import { clamp, expRand, rr, smoothstep, vnoise } from "./dsp";
 import { Gate, GEN_SR, glide, glideStep, Kit, Layer, type Env, type RideState } from "./kit";
 import { crossingDing, furin, railClack, rustle, templeBell } from "./voices";
 
-const L_WIND = 0.5;
-const L_BUFFET = 0.22;
+const L_WIND = 0.09;
+const L_BUFFET = 0;
 const L_GRASS = 0.05;
 const L_RUSTLE = 0.16;
 
@@ -27,7 +27,7 @@ export class WindLayer extends Layer {
     const src = kit.loop(kit.pinkSt);
     const split = this.ctx.createChannelSplitter(2);
     const merge = this.ctx.createChannelMerger(2);
-    src.connect(split);
+    src.connect(this.filter("highpass", 1500, 0.7)).connect(this.filter("highpass", 1500, 0.7)).connect(split);
     this.bpL = this.filter("bandpass", 500, 0.7);
     this.bpR = this.filter("bandpass", 520, 0.7);
     this.gL = this.gain();
@@ -60,22 +60,23 @@ export class WindLayer extends Layer {
   params(now: number, s: RideState, e: Env): void {
     const sp = clamp(s.speed / 10, 0, 1.4);
     const air = 0.2 + 0.8 * e.gust;
-    const flow = Math.min(sp * sp, 1.8);
+    const cruise = Math.min(sp, 0.7) / 0.7;
+    const flow = 0.35 * cruise;
     const dir = clamp(s.steer * 0.35 + (vnoise(now / 13, 5) - 0.5) * 0.6, -0.6, 0.6);
-    const base = L_WIND * (0.28 * air + flow);
+    const base = L_WIND * (0.55 * air + flow);
     glide(this.gL.gain, base * (1 - dir * 0.5), now, 0.15);
     glide(this.gR.gain, base * (1 + dir * 0.5), now, 0.15);
-    glideStep(this.bpL.frequency, 260 + 420 * air + 1100 * flow + 160 * (vnoise(now / 3.1, 7) - 0.5), now, 0.2);
-    glideStep(this.bpR.frequency, 280 + 420 * air + 1100 * flow + 160 * (vnoise(now / 2.7, 8) - 0.5), now, 0.2);
-    this.buffet.set(L_BUFFET * Math.pow(flow, 1.2) * (0.5 + e.turb) * smoothstep(0.25, 0.4, sp), now, 0.06);
-    glide(this.grass.gain, L_GRASS * (0.25 + 0.75 * e.gust) * (1 - 0.4 * s.trees) * (0.7 + 0.3 * sp), now, 0.3);
-    this.rustle.set(L_RUSTLE * s.trees * (0.18 + 0.82 * Math.pow(e.gust, 1.3)) * (0.85 + 0.3 * sp), now, 0.35);
+    glideStep(this.bpL.frequency, 2400 + 600 * air + 500 * flow + 300 * (vnoise(now / 3.1, 7) - 0.5), now, 0.2);
+    glideStep(this.bpR.frequency, 2500 + 600 * air + 500 * flow + 300 * (vnoise(now / 2.7, 8) - 0.5), now, 0.2);
+    this.buffet.set(L_BUFFET * e.turb * smoothstep(0.25, 0.4, sp), now, 0.06);
+    glide(this.grass.gain, L_GRASS * (0.25 + 0.75 * e.gust) * (1 - 0.4 * s.trees) * (0.7 + 0.3 * cruise), now, 0.3);
+    this.rustle.set(L_RUSTLE * s.trees * (0.18 + 0.82 * Math.pow(e.gust, 1.3)) * (0.85 + 0.2 * cruise), now, 0.35);
     if (this.rustleSrc) glide(this.rustleSrc.playbackRate, 0.96 + 0.08 * vnoise(now / 11, 9), now, 0.5);
   }
 }
 
-const L_BED = 0.05;
-const L_VALLEY = 0.04;
+const L_BED = 0.025;
+const L_VALLEY = 0;
 const L_FURIN = 0.12;
 const L_TEMPLE = 0.1;
 const L_CROSS = 0.06;

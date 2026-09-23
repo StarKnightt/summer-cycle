@@ -2,14 +2,14 @@ import { clamp, expRand, rr, smoothstep, vnoise } from "./dsp";
 import { Gate, GEN_SR, glide, glideStep, Kit, Layer, type RideState } from "./kit";
 import { bikeBell, chainTick, freewheelClick, rattle } from "./voices";
 
-const L_TYRE = 0.34;
-const L_HISS = 0.07;
-const L_WHIRR = 0.05;
-const L_CHAIN = 0.13;
-const L_FREE = 0.1;
-const L_RUB = 0.14;
+const L_TYRE = 0;
+const L_HISS = 0.006;
+const L_WHIRR = 0.012;
+const L_CHAIN = 0.06;
+const L_FREE = 0.05;
+const L_RUB = 0.06;
 const L_SQUEAL = 0.012;
-const L_RATTLE = 0.24;
+const L_RATTLE = 0.1;
 const L_BELL = 0.4;
 
 const TEETH = 33; // chainring teeth → chain mesh rate
@@ -85,7 +85,7 @@ export class BikeLayer extends Layer {
     const meshAM = this.gain(0.6);
     meshDepth.connect(meshAM.gain);
     this.whirr = new Gate(this.gain(), this.out);
-    whiteSrc.connect(this.filter("bandpass", 1900, 1.4)).connect(meshAM).connect(this.whirr.g);
+    whiteSrc.connect(this.filter("bandpass", 3200, 1.2)).connect(meshAM).connect(this.whirr.g);
 
     // Rim-brake rub, textured by the same wheel-rate modulation.
     this.rubBP = this.filter("bandpass", 2000, 1.1);
@@ -105,7 +105,7 @@ export class BikeLayer extends Layer {
     this.freeBus = this.gain();
     this.freeBus.connect(this.filter("highpass", 1500, 0.6)).connect(this.out);
     this.chainBus = this.gain();
-    this.chainBus.connect(this.out);
+    this.chainBus.connect(this.filter("highpass", 1200, 0.6)).connect(this.filter("lowpass", 5000, 0.6)).connect(this.out);
     this.wet.gain.value = 0.04;
     this.out.connect(this.wet);
   }
@@ -145,11 +145,11 @@ export class BikeLayer extends Layer {
     const grain = 0.85 + 0.3 * vnoise(this.dist / 7, 3);
     this.tyre.set(L_TYRE * Math.pow(sp, 1.2) * grain * (1 + 0.4 * s.roughness), now, 0.08);
     glideStep(this.tyreLP.frequency, 220 + 900 * sp, now, 0.1);
-    this.hiss.set(L_HISS * Math.pow(sp, 1.6) * grain, now, 0.08);
-    glideStep(this.hissBP.frequency, 2500 + 2200 * sp, now, 0.1);
+    this.hiss.set(L_HISS * Math.min(sp, 0.7) / 0.7, now, 0.15);
+    glideStep(this.hissBP.frequency, 5500, now, 0.1);
     glideStep(this.tread.frequency, Math.max(0.05, s.wheel), now, 0.05);
 
-    const crank = clamp(s.crank / 1.2, 0, 1.5);
+    const crank = clamp(s.crank / 1.2, 0, 1);
     this.whirr.set(L_WHIRR * s.pedal * crank, now, 0.08);
     glideStep(this.mesh.frequency, Math.max(1, s.crank * TEETH), now, 0.05);
     glide(this.chainBus.gain, L_CHAIN * s.pedal * clamp(s.crank / 0.5, 0, 1), now, 0.05);
