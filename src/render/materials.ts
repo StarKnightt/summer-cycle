@@ -22,7 +22,7 @@ export const G = {
   uSkyMid: { value: lin("#2fa3c0") },
   uSkyHorizon: { value: lin("#bfe3e6") },
   uFogColor: { value: lin("#c6ddd8") },
-  uFogDensity: { value: 0.0012 },
+  uFogDensity: { value: 0.00095 },
   uRimColor: { value: lin("#fff1d0") },
   uWindDir: { value: new THREE.Vector2(0.8, -0.6).normalize() },
   uShadowMap: { value: null as THREE.Texture | null },
@@ -34,6 +34,8 @@ export const G = {
   uShadowHalf: { value: 55 },
   /** Set while rendering the paddy mirror: canopy fringe cards are skipped there. */
   uNoFringe: { value: 0 },
+  /** Painted leaf atlas (see leafAtlas.ts); assigned once the renderer exists. */
+  uLeafTex: { value: null as THREE.Texture | null },
 };
 
 export const COMMON = /* glsl */ `
@@ -49,6 +51,7 @@ uniform float uFogDensity;
 uniform vec3 uRimColor;
 uniform vec2 uWindDir;
 uniform float uNoFringe;
+uniform sampler2D uLeafTex;
 uniform sampler2D uShadowMap;
 uniform mat4 uShadowMat;
 uniform float uShadowOn;
@@ -85,7 +88,7 @@ vec3 skyColor(vec3 dir){
 vec3 applyFog(vec3 col, vec3 wpos){
   vec3 d = wpos - cameraPosition;
   float dist = length(d);
-  float f = 1.0 - exp(-max(dist - 30.0, 0.0) * uFogDensity);
+  float f = 1.0 - exp(-max(dist - 70.0, 0.0) * uFogDensity);
   vec3 dir = d / max(dist, 0.001);
   vec3 fc = mix(uFogColor, skyColor(normalize(vec3(dir.x, 0.03, dir.z))), 0.45);
   fc *= vec3(1.03, 1.0, 0.95);
@@ -99,7 +102,10 @@ float brush(vec3 wp, vec3 n){
   float ang = vnoise(p * 0.12) * 3.14159;
   float c = cos(ang), s = sin(ang);
   vec2 q = mat2(c, -s, s, c) * p;
-  return vnoise(q * vec2(1.1, 6.0)) * 0.6 + vnoise(q * vec2(2.3, 13.0)) * 0.4;
+  // Band-limited by pixel footprint: stroke octaves fade to their mean before they can alias.
+  float fp = length(wp - cameraPosition) * 0.0011;
+  float k1 = 1.0 - smoothstep(0.25, 0.6, fp * 6.0), k2 = 1.0 - smoothstep(0.25, 0.6, fp * 13.0);
+  return 0.5 + (vnoise(q * vec2(1.1, 6.0)) - 0.5) * 0.6 * k1 + (vnoise(q * vec2(2.3, 13.0)) - 0.5) * 0.4 * k2;
 }
 
 // Toon-thresholded shadow map: 1 = sunlit, 0 = in shadow. Canopy shadows get sun flecks.
@@ -189,9 +195,12 @@ layout(location = 0) out vec4 gColor;
 layout(location = 1) out vec4 gNormal;
 uniform float uId;
 uniform float uMask;
+// Coverage for alpha-cut cards: with MSAA + alphaToCoverage this becomes a per-sample mask, so
+// blade and leaf edges resolve smoothly instead of crawling as the camera moves.
+float gAlpha = 1.0;
 void writeOut(vec3 col, vec3 wN, float mask){
   vec3 vn = normalize((viewMatrix * vec4(wN, 0.0)).xyz);
-  gColor = vec4(col, 1.0);
+  gColor = vec4(col, gAlpha);
   gNormal = vec4(vn.xy * 0.5 + 0.5, uId / 32.0, mask);
 }
 `;
@@ -317,6 +326,18 @@ vec2 cellular(vec2 p){
   return vec2(sqrt(d), hash12(i + best + 41.7));
 }
 
+// Anti-aliased periodic line of half-width hw (cell units) on every integer of x. Once cells shrink
+// below a few pixels it fades to its average coverage instead of crawling (moiré / shimmer).
+float aaLine(float x, float hw){
+  float w = fwidth(x);
+  float d = abs(fract(x + 0.5) - 0.5);
+  float l = 1.0 - smoothstep(hw - w, hw + w, d);
+  return mix(l, 2.0 * hw, smoothstep(0.2, 0.5, w));
+}
+float aaStep(float e, float x){ float w = fwidth(x) * 0.7 + 1e-5; return smoothstep(e - w, e + w, x); }
+// Fine-detail fade: 1 while the pattern of frequency x is resolvable, 0 when it would alias.
+float aaKeep(float x){ return 1.0 - smoothstep(0.15, 0.45, fwidth(x)); }
+
 void main(){
   vec3 N = normalize(vN);
   if (!gl_FrontFacing && vMat != 17 && vMat != 21) N = -N;
@@ -331,14 +352,22 @@ void main(){
     vec2 d = vUv - 0.5;
     float r = length(d), th = atan(d.y, d.x);
     float petal = 0.3 + 0.16 * cos(th * 5.0);
-    if (r > petal) discard;
+    float edge = petal - r;
+    float fa = clamp(edge / max(fwidth(edge), 1e-4) + 0.5, 0.0, 1.0);
+    if (fa < 0.02) discard;
+    gAlpha = fa;
     base = mix(vec3(0.95, 0.62, 0.08), base, smoothstep(0.08, 0.11, r)) * (0.85 + 0.3 * r / petal);
     N = normalize(mix(N, vec3(0.0, 1.0, 0.0), 0.5));
     mask = -1.0; paint = 0.3; rim = 0.3;
   }
-  if (mt == 17 || mt == 21) { // leaf card: scalloped alpha-cut leaf cluster on the canopy edge
-    float a = leafShape(vUv);
-    if (a < 0.5) discard;
+  float leafTone = -1.0, leafVar = 0.5;
+  if (mt == 17 || mt == 21) { // leaf card: painted leaf cluster from the atlas (uv already in the atlas)
+    vec4 lt = texture(uLeafTex, vUv);
+    // Sharpen the mipmapped coverage to ~1 px, then hand it to alpha-to-coverage.
+    float a = clamp((lt.a - 0.5) / max(fwidth(lt.a), 1e-3) + 0.5, 0.0, 1.0);
+    if (a < 0.02) discard;
+    gAlpha = a;
+    leafTone = lt.r; leafVar = lt.g;
     mt = 1;
     mask = -1.0;
     card = true;
@@ -360,35 +389,66 @@ void main(){
       vec2 c = cellular(p);
       jit = ((c.y - 0.5) * 0.7 + (n2 - 0.5) * 0.3 - smoothstep(0.5, 0.95, c.x) * 0.3) * mix(1.0, 0.6, nearK);
       leafHi = smoothstep(0.62, 0.9, n2) * (1.0 - smoothstep(0.3, 0.8, c.x));
+      // Canopy surface painted with atlas leaves in two overlapping world-space layers (textureGrad
+      // keeps the mip choice continuous across the fract() wrap: no seam lines).
+      vec2 wp = (an.y > 0.55 ? vWPos.xz : (an.x > an.z ? vWPos.zy : vWPos.xy)) * 1.35;
+      vec2 wq = mat2(0.8, -0.6, 0.6, 0.8) * wp * 1.6 + 3.7;
+      vec2 cA = vec2(0.0, 0.5), cB = vec2(0.5, 0.0); // ovate + small-leaf cells
+      vec4 la = textureGrad(uLeafTex, cA + fract(wp) * 0.5, dFdx(wp) * 0.5, dFdy(wp) * 0.5);
+      vec4 lb = textureGrad(uLeafTex, cB + fract(wq) * 0.5, dFdx(wq) * 0.5, dFdy(wq) * 0.5);
+      float ka = smoothstep(0.35, 0.65, la.a), kb = smoothstep(0.35, 0.65, lb.a);
+      leafTone = mix(mix(0.1, lb.r * 0.85, kb), la.r, ka);
+      leafVar = mix(lb.g, la.g, ka);
     }
     // Grey light probe: the canopy palette is applied to the toon light response below.
     base = vec3(0.25);
-    paint = 1.3; rim = 0.5;
+    // Low paint/jitter: thresholding smooth noise draws its isolines, which read as concentric
+    // contour rings on a near bush. The painted leaves carry the texture instead.
+    if (!card) jit *= 0.55;
+    paint = card ? 0.25 : 0.4; rim = 0.5;
+    // Cards brushing past the lens fade out through coverage instead of popping at the near plane.
+    if (card) gAlpha *= smoothstep(0.25, 0.9, distance(vWPos, cameraPosition));
   } else if (mt == 2) {     // dark stained vertical wall boards
     vec2 tg = normalize(vec2(-N.z, N.x) + 1e-4);
     float s = dot(vWPos.xz, tg);
-    float f = fract(s / 0.21);
-    base *= mix(0.6, 1.0, smoothstep(0.0, 0.07, f) * smoothstep(1.0, 0.93, f)) * (0.9 + 0.2 * vnoise(vec2(s * 5.0, vWPos.y * 0.8)));
-    paint = 0.7;
+    float bx = s / 0.21;
+    float board = floor(bx);
+    // Per-board tone, seams, fine vertical grain and the odd knot (all fade before they alias).
+    float tone = 0.88 + 0.2 * hash12(vec2(board, 3.7));
+    float grain = (vnoise(vec2(s * 55.0, vWPos.y * 1.6 + board * 7.0)) - 0.5) * 0.22 * aaKeep(s * 55.0);
+    vec2 kp = vec2(fract(bx) - 0.5, fract(vWPos.y * 0.6 + hash12(vec2(board, 9.1))) - 0.5) * vec2(0.21, 1.66);
+    float knot = (1.0 - smoothstep(0.012, 0.03, length(kp))) * step(0.7, hash12(vec2(board, floor(vWPos.y * 0.6))));
+    base *= tone * (1.0 + grain) * (1.0 - 0.45 * aaLine(bx, 0.045)) * (1.0 - knot * 0.35 * aaKeep(bx * 8.0));
+    // Weathering: darker and mossier toward the stone footing.
+    base = mix(base, base * vec3(0.8, 0.9, 0.7), (1.0 - smoothstep(0.3, 1.0, vWPos.y)) * 0.6);
+    paint = 0.5;
   } else if (mt == 3) {     // kawara roof tiles (uv in metres): ribs down the slope, course lines
-    float cu = fract(vUv.x / 0.25);
-    float rv = fract(vUv.y / 0.28);
+    vec2 t = vec2(vUv.x / 0.25, vUv.y / 0.28);
+    vec2 id = floor(t);
+    float cu = fract(t.x);
     float rib = 0.5 + 0.5 * sin(cu * 6.2831);
-    base = mix(vec3(0.0144, 0.0185, 0.0203), vec3(0.0409, 0.0529, 0.0612), rib) * (vCol.r > 0.5 ? 1.0 : 0.9);
-    base *= mix(0.55, 1.0, smoothstep(0.0, 0.14, rv));
-    paint = 0.5; rim = 1.2;
+    float var = 0.85 + 0.3 * hash12(id);
+    base = mix(vec3(0.0144, 0.0185, 0.0203), vec3(0.0409, 0.0529, 0.0612), rib) * (vCol.r > 0.5 ? 1.0 : 0.9) * var;
+    // Each course's lower lip: dark gap then a lit rounded edge, anti-aliased.
+    float lip = aaLine(t.y, 0.06);
+    float edge = aaLine(t.y - 0.1, 0.05);
+    base *= (1.0 - 0.55 * lip) * (1.0 + 0.7 * edge * rib);
+    // Lichen / weathering blooms, stronger toward the eaves (low uv.y is the gutter edge).
+    float lich = smoothstep(0.62, 0.8, vnoise(vUv * 3.1 + 11.0)) * (1.0 - smoothstep(0.0, 2.2, vUv.y) * 0.6);
+    base = mix(base, vec3(0.12, 0.13, 0.07), lich * 0.5);
+    paint = 0.4; rim = 1.2;
   } else if (mt == 4) {     // shoji: matte cream paper in a wooden lattice (daylight, no glow)
-    vec2 g = vec2(fract(vUv.x * 5.0), fract(vUv.y * 4.0));
-    float frame = max(step(g.x, 0.08), step(g.y, 0.07));
-    frame = max(frame, max(step(0.97, vUv.x) + step(vUv.x, 0.03), step(0.97, vUv.y) + step(vUv.y, 0.03)));
-    base = mix(vec3(0.8, 0.72, 0.53), vec3(0.08, 0.05, 0.03), frame);
-    paint = 0.4;
+    float frame = max(aaLine(vUv.x * 5.0, 0.045), aaLine(vUv.y * 4.0, 0.04));
+    frame = max(frame, 1.0 - aaStep(0.03, vUv.x) * aaStep(0.03, vUv.y) * (1.0 - aaStep(0.97, vUv.x)) * (1.0 - aaStep(0.97, vUv.y)));
+    float fib = (vnoise(vUv * vec2(40.0, 90.0)) - 0.5) * 0.08 * aaKeep(vUv.y * 90.0);
+    base = mix(vec3(0.8, 0.72, 0.53) * (1.0 + fib), vec3(0.08, 0.05, 0.03), frame);
+    paint = 0.3;
   } else if (mt == 5) {     // glass: dark interior, sky sheen streak, faint warm depth
-    vec2 g = vec2(fract(vUv.x * 3.0), fract(vUv.y * 2.0));
-    float frame = max(step(g.x, 0.05), step(g.y, 0.045));
-    frame = max(frame, step(0.96, vUv.x) + step(vUv.x, 0.04));
-    float streak = smoothstep(0.05, 0.0, abs(fract(vUv.x * 1.3 + vUv.y * 0.9) - 0.5) - 0.12);
-    vec3 glass = vec3(0.03, 0.045, 0.05) + uSkyMid * 0.18 * streak + vec3(0.12, 0.07, 0.03) * (1.0 - vUv.y) * 0.5;
+    float frame = max(aaLine(vUv.x * 3.0, 0.03), aaLine(vUv.y * 2.0, 0.025));
+    frame = max(frame, 1.0 - aaStep(0.04, vUv.x) * (1.0 - aaStep(0.96, vUv.x)));
+    // One broad soft sheen (a sharp repeating stripe shimmered as the camera moved).
+    float streak = 1.0 - smoothstep(0.0, 0.35, abs(vUv.x * 0.8 + vUv.y * 0.6 - 0.75));
+    vec3 glass = vec3(0.03, 0.045, 0.05) + uSkyMid * 0.16 * streak + vec3(0.12, 0.07, 0.03) * (1.0 - vUv.y) * 0.5;
     base = mix(glass, vec3(0.06, 0.04, 0.025), frame);
     paint = 0.2; rim = 0.0;
   } else if (mt == 6) {     // grass blades: soft up-facing normals, no ink
@@ -430,7 +490,7 @@ void main(){
     base *= 0.85 + 0.3 * s;
     paint = 0.3; rim = 1.4; soft = 0.02;
   } else if (mt == 16) {    // yellow/black pole guard
-    float st = step(0.5, fract(vWPos.y * 2.2 + atan(vObj.x, vObj.z) * 0.16));
+    float st = aaStep(0.5, fract(vWPos.y * 2.2 + atan(vObj.x, vObj.z) * 0.16));
     base = mix(vec3(0.02, 0.02, 0.02), vec3(0.9, 0.62, 0.04), st);
     paint = 0.3;
   } else if (mt == 18) {    // light mote
@@ -483,6 +543,13 @@ void main(){
     c += vec3(0.012, 0.02, 0.008) * under * (0.5 + jit);
     c = mix(c, sunC, litC);
     c = mix(c, vec3(0.12, 0.25, 0.055), leafHi * litC * 0.45);
+    if (leafTone >= 0.0) {
+      // Painted leaves: 3-4 tones per leaf (dark core, shaded half, lit half, sunlit edge), with a
+      // little hue drift per leaf. Shade + sun response stays from the canopy model above.
+      c *= mix(0.5, 1.45, leafTone) * (0.9 + 0.22 * leafVar);
+      c = mix(c, sunC * vec3(1.18, 1.12, 0.9), litC * smoothstep(0.62, 0.92, leafTone) * 0.55);
+      c = mix(c, c * vec3(1.05, 1.1, 0.72), (leafVar - 0.5) * 0.35);
+    }
     col = c;
   }
   col = applyFog(col, vWPos);
@@ -504,6 +571,7 @@ export function uber(id: number, mask = 1, side: THREE.Side = THREE.FrontSide): 
       fragmentShader: UBER_FS,
       vertexColors: true,
       side,
+      alphaToCoverage: true,
     });
     uberCache.set(key, m);
   }
@@ -515,7 +583,7 @@ export function shadowDepthMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
-    uniforms: {},
+    uniforms: { uLeafTex: G.uLeafTex },
     vertexShader: /* glsl */ `
       in float aMat;
       out vec2 vUv; flat out int vMat;
@@ -529,11 +597,11 @@ export function shadowDepthMaterial(): THREE.ShaderMaterial {
         if (vMat == 21) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // fringe cards: no shadow, clipped
       }`,
     fragmentShader: /* glsl */ `
-      ${LEAF_SHAPE}
+      uniform sampler2D uLeafTex;
       in vec2 vUv; flat in int vMat;
       layout(location = 0) out vec4 o;
       void main(){
-        if (vMat == 17 && leafShape(vUv) < 0.5) discard;
+        if (vMat == 17 && texture(uLeafTex, vUv).a < 0.5) discard;
         o = vec4(1.0);
       }`,
   });

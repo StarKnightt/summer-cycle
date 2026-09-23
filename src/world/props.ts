@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { M, beam, blob, box, boxM, cyl, merge, prep, sphere, spherize, xf } from "./geo";
 import { mulberry32, range } from "../core/rng";
+import { LEAF_CELL, cellUv } from "../render/leafAtlas";
 
 type Geo = THREE.BufferGeometry;
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -133,8 +134,10 @@ function pottedPlant(r: number, seed: number): Geo[] {
 }
 
 /** Leaf card: alpha-cut leaf cluster quad facing `dir`, normal set to `nrm` (for coherent shading). */
-export function leafCard(c: THREE.Vector3, dir: THREE.Vector3, size: number, color: string, nrm: THREE.Vector3, roll: number, mat: number = M.leafCard): Geo {
+export function leafCard(c: THREE.Vector3, dir: THREE.Vector3, size: number, color: string, nrm: THREE.Vector3, roll: number, mat: number = M.leafCard, cell: number = LEAF_CELL.ovate): Geo {
   const g = new THREE.PlaneGeometry(size, size);
+  const uv = g.attributes.uv as THREE.BufferAttribute;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, ...cellUv(cell, uv.getX(i), uv.getY(i)));
   g.rotateZ(roll);
   const q = new THREE.Quaternion().setFromUnitVectors(V(0, 0, 1), dir.clone().normalize());
   g.applyQuaternion(q);
@@ -348,22 +351,51 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
       for (const s of shell) d = Math.min(d, p.distanceTo(s.c) - s.rad * 0.92);
       return d;
     };
-    const n = lod ? 7 : 13;
+    const n = lod ? 11 : 13;
+    // Distant LOD: 3-5 sub-crowns at uneven heights/offsets (keyaki / camphor-like clumps) so the
+    // silhouette is lobed and lopsided, never one ball on a stick.
+    const subs = Array.from({ length: 3 + Math.floor(r() * 3) }, (_, k) => {
+      const a = r() * Math.PI * 2;
+      const d = k === 0 ? 0 : cr * range(r, 0.45, 0.8);
+      return V(center.x + Math.cos(a) * d, center.y + range(r, -0.45, 0.35) * cr * (kind === "tall" ? 1.4 : 1), center.z + Math.sin(a) * d * 0.8);
+    });
     for (let i = 0; i < n; i++) {
       const a = r() * Math.PI * 2;
       const e = range(r, -0.35, 1.0);
-      const d = cr * range(r, 0.45, 0.8);
-      const c = V(center.x + Math.cos(a) * d * Math.cos(e), center.y + Math.sin(e) * d * (kind === "tall" ? 1.2 : 0.75), center.z + Math.sin(a) * d * Math.cos(e));
-      const rad = cr * range(r, 0.42, 0.62);
+      let c: THREE.Vector3, rad: number;
+      if (lod) {
+        const sc = subs[i % subs.length];
+        const d = cr * range(r, 0.15, 0.4);
+        c = V(sc.x + Math.cos(a) * d * Math.cos(e), sc.y + Math.sin(e) * d * 0.7, sc.z + Math.sin(a) * d * Math.cos(e));
+        rad = cr * range(r, 0.3, 0.46);
+      } else {
+        const d = cr * range(r, 0.45, 0.8);
+        c = V(center.x + Math.cos(a) * d * Math.cos(e), center.y + Math.sin(e) * d * (kind === "tall" ? 1.2 : 0.75), center.z + Math.sin(a) * d * Math.cos(e));
+        rad = cr * range(r, 0.42, 0.62);
+      }
       // Hero trees get denser main masses: no big flat facets when one hangs over the camera.
       blobs.push(leaf(c, rad, lod || rad < cr * 0.52 ? det : 3));
       shell.push({ c, rad });
     }
-    blobs.push(leaf(center, cr * 0.75, lod ? det : 3));
-    shell.push({ c: center, rad: cr * 0.75 });
+    if (!lod) {
+      blobs.push(leaf(center, cr * 0.75, 3));
+      shell.push({ c: center, rad: cr * 0.75 });
+    } else for (const sc of subs) out.push(beam(V(top.x * 0.7, h * 0.8, top.z * 0.7), sc.clone().multiplyScalar(0.9).setY(sc.y - cr * 0.2), 0.1, "#5b4331", M.bark, 4, 0.05));
     for (const b of blobs) {
-      spherize(b, center, lod ? 0.65 : 0.72, kind === "tall" ? 0.8 : 1.2);
+      spherize(b, center, lod ? 0.45 : 0.72, kind === "tall" ? 0.8 : 1.2);
       out.push(b);
+    }
+    if (lod) {
+      // Leafy fringe on every sub-crown: cards sit on the lobe shells, so the edge breaks up.
+      const cell = kind === "tall" ? LEAF_CELL.small : LEAF_CELL.ovate;
+      for (let i = 0; i < 44; i++) {
+        const s = shell[Math.floor(r() * shell.length)];
+        const dir = randDir(r);
+        if (dir.y < -0.3) continue;
+        const c = s.c.clone().addScaledVector(dir, s.rad * 0.95);
+        if (surfDist(c) > 0.2) continue;
+        out.push(leafCard(c, dir, cr * range(r, 0.26, 0.38), LEAF[Math.floor(r() * LEAF.length)], dir, r() * 6.28, M.fringeCard, cell));
+      }
     }
     if (!lod) {
       // Scalloped silhouette: leaf-cluster cards around the canopy shell, plus a few lumps.
@@ -379,7 +411,8 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
         spherize(g, center, 0.7, 1.2);
         out.push(g);
       }
-      for (let i = 0; i < 100; i++) {
+      const cell = kind === "tall" ? LEAF_CELL.small : LEAF_CELL.ovate;
+      for (let i = 0; i < 105; i++) {
         const dir = randDir(r);
         let rad = cr * range(r, 0.98, 1.16);
         const c = center.clone().add(V(dir.x * rad, dir.y * rad * sy, dir.z * rad));
@@ -391,11 +424,11 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
         if (surfDist(c) > 0.3) continue;
         const nrm = dir.clone().normalize();
         const facing = dir.clone().add(V(range(r, -0.5, 0.5), range(r, -0.3, 0.5), range(r, -0.5, 0.5))).normalize();
-        out.push(leafCard(c, facing, cr * range(r, 0.18, 0.28), LEAF[Math.floor(r() * LEAF.length)], nrm, r() * 6.28));
+        out.push(leafCard(c, facing, cr * range(r, 0.16, 0.24), LEAF[Math.floor(r() * LEAF.length)], nrm, r() * 6.28, M.leafCard, r() < 0.8 ? cell : LEAF_CELL.small));
       }
       // Serrated fringe: cards straddling the lower rim and underside so the silhouette seen from
       // below breaks into leaf clusters instead of a smooth blob edge.
-      for (let i = 0; i < 64; i++) {
+      for (let i = 0; i < 70; i++) {
         const a = r() * Math.PI * 2;
         const dy = range(r, -0.9, 0.3);
         const dir = V(Math.cos(a) * Math.sqrt(1 - dy * dy), dy, Math.sin(a) * Math.sqrt(1 - dy * dy));
@@ -409,25 +442,36 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
         }
         if (surfDist(c) > out0 + 0.2) continue;
         const facing = dir.clone().add(V(range(r, -0.6, 0.6), range(r, -0.6, 0.2), range(r, -0.6, 0.6))).normalize();
-        out.push(leafCard(c, facing, cr * range(r, 0.24, 0.34), LEAF[Math.floor(r() * LEAF.length)], dir, r() * 6.28, M.fringeCard));
+        out.push(leafCard(c, facing, cr * range(r, 0.2, 0.3), LEAF[Math.floor(r() * LEAF.length)], dir, r() * 6.28, M.fringeCard, cell));
       }
     }
   } else if (kind === "bush") {
+    // Shrub = layered leaf cards around a small, dark, hidden core (never a bare striped sphere).
     const center = V(0, 0.7, 0);
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 5; i++) {
       const a = r() * Math.PI * 2;
-      const c = V(Math.cos(a) * 0.7, range(r, 0.5, 1.0), Math.sin(a) * 0.7);
-      const b = leaf(c, range(r, 0.55, 0.85));
+      const c = V(Math.cos(a) * 0.5, range(r, 0.45, 0.85), Math.sin(a) * 0.5);
+      const b = prep(blob(range(r, 0.42, 0.6), 1, 0.16, seed + i * 5), "#10241a", M.foliage, 0);
+      b.translate(c.x, c.y, c.z);
       spherize(b, center, 0.6);
       out.push(b);
     }
-    if (!lod)
-      for (let i = 0; i < 40; i++) {
-        const dir = randDir(r);
-        if (dir.y < -0.1) continue;
-        const c = center.clone().add(V(dir.x * 1.35, dir.y * 0.9 + 0.1, dir.z * 1.35));
-        out.push(leafCard(c, dir, range(r, 0.35, 0.55), LEAF[Math.floor(r() * LEAF.length)], dir, r() * 6.28));
-      }
+    // Twigs through the gaps.
+    for (let i = 0; i < 6; i++) {
+      const a = r() * Math.PI * 2;
+      out.push(beam(V(0, 0, 0), V(Math.cos(a) * 1.0, range(r, 0.7, 1.3), Math.sin(a) * 1.0), 0.025, "#4a3a2a", M.bark, 4, 0.01));
+    }
+    const nCards = lod ? 50 : 100;
+    for (let i = 0; i < nCards; i++) {
+      const dir = randDir(r);
+      if (dir.y < -0.35) continue;
+      // Three shells: inner cards darker (occluded), outer ones catch the light.
+      const shellR = range(r, 0.85, 1.4);
+      const c = center.clone().add(V(dir.x * shellR, dir.y * 0.75 * shellR + 0.15, dir.z * shellR));
+      const facing = dir.clone().add(V(range(r, -0.5, 0.5), range(r, -0.2, 0.5), range(r, -0.5, 0.5))).normalize();
+      const cell = r() < 0.7 ? LEAF_CELL.broad : LEAF_CELL.ovate;
+      out.push(leafCard(c, facing, range(r, 0.45, 0.7) * (lod ? 1.3 : 1), LEAF[Math.floor(r() * LEAF.length)], dir, r() * 6.28, M.leafCard, cell));
+    }
   } else {
     // Japanese cedar: one continuous lumpy spire (overlapping masses, no separated tiers).
     const h = range(r, 9, 12);
@@ -455,6 +499,14 @@ export function tree(kind: TreeKind, seed: number, lod = 0): Geo {
       g.translate(Math.cos(a) * cr, y, Math.sin(a) * cr);
       spherize(g, V(0, y - 0.6, 0), 0.6, 0.7);
       out.push(g);
+    }
+    // Needle-spray cards over the whole spire: a feathery silhouette instead of smooth lumps.
+    for (let i = 0; i < (lod ? 40 : 90); i++) {
+      const y = y0 + 0.2 + Math.pow(r(), 0.8) * (y1 - y0 - 0.2);
+      const a = r() * Math.PI * 2;
+      const rr = coneR(y) * range(r, 0.95, 1.2);
+      const dir = V(Math.cos(a), range(r, -0.3, 0.4), Math.sin(a)).normalize();
+      out.push(leafCard(V(Math.cos(a) * rr, y, Math.sin(a) * rr), dir, range(r, 0.9, 1.4), LEAF[Math.floor(r() * LEAF.length)], dir, r() * 6.28, M.fringeCard, LEAF_CELL.small));
     }
   }
   return merge(out);
@@ -591,5 +643,134 @@ export function stoneMarker(): Geo {
   s.translate(0, 0.42, 0);
   out.push(s);
   out.push(xf(box(0.2, 0.14, 0.12, "#c9302a", M.cloth), 0, 0.42, 0.08));
+  return merge(out);
+}
+
+// ------------------------------------------------------------------ far field (cheap, merged)
+
+/** Distant farmhouse: plaster / dark-board box under a tile or tin gable roof, sometimes an annex. */
+export function farHouse(seed: number): Geo {
+  const r = mulberry32(seed);
+  const out: Geo[] = [];
+  const w = range(r, 6, 10), d = range(r, 5, 7), h = r() > 0.6 ? range(r, 4.6, 5.4) : range(r, 2.6, 3.2);
+  const wall = r() > 0.45 ? PLASTER : WOOD_STAIN;
+  const tin = r() > 0.7;
+  const roofCol = tin ? (r() > 0.5 ? "#8a4a34" : "#4f6878") : TILE;
+  const addBlock = (bw: number, bd: number, bh: number, x: number, z: number, pitch: number) => {
+    out.push(xf(box(bw, bh, bd, wall, M.plain), x, bh / 2, z));
+    out.push(xf(box(bw + 0.1, 0.5, bd + 0.05, WOOD_DARK), x, 0.25, z));
+    const half = bd / 2 + 0.7;
+    const slope = half / Math.cos(pitch);
+    for (const s of [-1, 1]) {
+      const g = box(bw + 1.2, 0.2, slope, roofCol, tin ? M.metal : M.roof);
+      g.rotateX(s * pitch);
+      g.translate(x, bh + (bd / 2) * Math.tan(pitch) - (half * Math.tan(pitch)) / 2 + 0.1, z + (s * half) / 2);
+      out.push(g);
+    }
+    for (const s of [-1, 1]) {
+      const gb = gable(bd, (bd / 2) * Math.tan(pitch), 0.1, wall, M.plain);
+      gb.rotateY(Math.PI / 2);
+      gb.translate(x + (s * bw) / 2 - s * 0.05, bh, z);
+      out.push(gb);
+    }
+    // Window band (shoji / glass) on the long faces.
+    for (const s of [-1, 1]) out.push(xf(box(bw * 0.7, 0.9, 0.06, "#e8dcc0", M.plain), x, bh * 0.55, z + s * (bd / 2 + 0.02)));
+  };
+  addBlock(w, d, h, 0, 0, range(r, 0.45, 0.6));
+  if (r() > 0.45) addBlock(w * range(r, 0.4, 0.6), d * 0.8, h > 4 ? h * 0.55 : h * 0.9, w * 0.5 + 1.5, range(r, -1, 1), 0.5);
+  return merge(out);
+}
+
+/** Village school: three storeys, window bands, flat roof, clock on the stair tower. */
+export function school(): Geo {
+  const out: Geo[] = [];
+  const W = 34, D = 9, H = 10.5;
+  out.push(xf(box(W, H, D, "#e9e4d6", M.plain), 0, H / 2, 0));
+  out.push(xf(box(W + 0.4, 0.5, D + 0.4, "#b9b4a8", M.plain), 0, H + 0.25, 0));
+  for (let f = 0; f < 3; f++) {
+    out.push(xf(box(W - 2, 1.5, 0.08, "#5f7488", M.plain), 0, 1.6 + f * 3.3, D / 2 + 0.04));
+    out.push(xf(box(W - 1, 0.18, 0.5, "#cfc9ba", M.plain), 0, 0.7 + f * 3.3, D / 2 + 0.25));
+    for (let i = 0; i <= 12; i++) out.push(xf(box(0.14, 1.5, 0.12, "#e9e4d6", M.plain), -W / 2 + 1 + (i * (W - 2)) / 12, 1.6 + f * 3.3, D / 2 + 0.08));
+  }
+  // Stair tower + clock face (white disc, dark rim, two hands).
+  out.push(xf(box(5, H + 3, 5, "#e3ddcd", M.plain), W / 2 - 4, (H + 3) / 2, 0.8));
+  const face = prep(new THREE.CircleGeometry(1.25, 20), "#f6f2e6", M.plain);
+  face.translate(W / 2 - 4, H + 1, 3.33);
+  out.push(face);
+  const rim = prep(new THREE.RingGeometry(1.25, 1.45, 20), "#2a2622", M.plain);
+  rim.translate(W / 2 - 4, H + 1, 3.34);
+  out.push(rim);
+  out.push(xf(box(0.14, 0.95, 0.05, "#2a2622"), W / 2 - 4, H + 1.4, 3.37));
+  out.push(xf(box(0.7, 0.14, 0.05, "#2a2622"), W / 2 - 4 + 0.32, H + 1, 3.37));
+  // Gym roof (barrel) beside it.
+  const gym = prep(new THREE.CylinderGeometry(9, 9, 20, 16, 1, false, 0, Math.PI), "#6f8494", M.metal);
+  gym.rotateZ(Math.PI / 2);
+  gym.rotateY(Math.PI / 2);
+  gym.scale(1, 0.32, 1);
+  gym.translate(-W / 2 - 12, 6, 0);
+  out.push(gym);
+  out.push(xf(box(18, 6, 20, "#e2dccb", M.plain), -W / 2 - 12, 3, 0));
+  return merge(out);
+}
+
+/** Steel-legged water tower (tank on four braced legs). */
+export function waterTower(): Geo {
+  const out: Geo[] = [];
+  const H = 16;
+  for (const [x, z] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) out.push(beam(V(x * 1.3, 0, z * 1.3), V(x * 0.8, H, z * 0.8), 0.18, "#8c9290", M.metal, 5));
+  for (let y = 4; y < H; y += 4) out.push(xf(box(4.2, 0.15, 4.2, "#8c9290", M.metal), 0, y, 0));
+  out.push(xf(cyl(3, 3, 4.2, "#c4c8c2", M.metal, 16), 0, H + 2.1, 0));
+  out.push(xf(cyl(0.2, 3.1, 1.2, "#aeb3ad", M.metal, 16), 0, H + 4.8, 0));
+  return merge(out);
+}
+
+/** Small field shed: weathered boards under a rusted tin lean-to. */
+export function shed(seed: number): Geo {
+  const r = mulberry32(seed);
+  const w = range(r, 2.4, 3.6), d = range(r, 2, 2.8), h = range(r, 2, 2.5);
+  const out: Geo[] = [xf(box(w, h, d, r() > 0.5 ? WOOD : "#6a5a48", M.planks), 0, h / 2, 0)];
+  const tin = box(w + 0.5, 0.08, d + 0.7, r() > 0.5 ? "#8a553a" : "#6f7f86", M.metal);
+  tin.rotateX(0.2);
+  tin.translate(0, h + 0.25, 0);
+  out.push(tin);
+  out.push(xf(box(0.9, 1.7, 0.05, WOOD_DARK), w * 0.2, 0.85, d / 2 + 0.03));
+  return merge(out);
+}
+
+/** Scarecrow (kakashi): post, crossbar arms, faded shirt, straw hat. */
+export function scarecrow(seed: number): Geo {
+  const r = mulberry32(seed);
+  const shirt = ["#5f7ea0", "#a8584a", "#c8b890"][Math.floor(r() * 3)];
+  const out: Geo[] = [
+    beam(V(0, -0.3, 0), V(0, 1.9, 0), 0.04, "#6e5d49", M.bark, 5),
+    beam(V(-0.75, 1.35, 0), V(0.75, 1.4, 0), 0.03, "#6e5d49", M.bark, 5),
+    xf(box(0.5, 0.6, 0.22, shirt, M.cloth), 0, 1.2, 0),
+    xf(box(1.3, 0.16, 0.18, shirt, M.cloth), 0, 1.38, 0),
+    xf(sphere(0.16, "#e8e0c8"), 0, 1.72, 0),
+  ];
+  const hat = prep(new THREE.ConeGeometry(0.36, 0.2, 10), "#d8c078", M.plain);
+  hat.translate(0, 1.9, 0);
+  out.push(hat);
+  return merge(out);
+}
+
+/** Bamboo grove clump: tall pale culms leaning outward, feathery leaf sprays toward the top. */
+export function bambooGrove(seed: number): Geo {
+  const r = mulberry32(seed);
+  const out: Geo[] = [];
+  for (let i = 0; i < 26; i++) {
+    const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 3.2;
+    const base = V(Math.cos(a) * d, -0.2, Math.sin(a) * d);
+    const h = range(r, 9, 14);
+    const lean = V(Math.cos(a) * range(r, 0.6, 2.2), h, Math.sin(a) * range(r, 0.6, 2.2));
+    const tip = base.clone().add(lean);
+    out.push(beam(base, tip, 0.07, i % 3 ? "#7e9a50" : "#93a860", M.plain, 5, 0.035));
+    for (let k = 0; k < 7; k++) {
+      const t = range(r, 0.45, 1.0);
+      const c = base.clone().lerp(tip, t);
+      const dir = V(range(r, -1, 1), range(r, -0.2, 0.5), range(r, -1, 1)).normalize();
+      out.push(leafCard(c.addScaledVector(dir, 0.5), dir, range(r, 1.4, 2.1), ["#3f6a34", "#4f7a3a", "#35602e"][k % 3], dir, r() * 6.28, M.fringeCard, LEAF_CELL.lance));
+    }
+  }
   return merge(out);
 }

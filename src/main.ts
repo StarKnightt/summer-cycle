@@ -12,6 +12,7 @@ import { Input } from "./core/input";
 import { RideAudio } from "./audio";
 import { Loader, type Stage } from "./loader";
 import { precompile, warmDraws } from "./render/precompile";
+import { leafAtlas } from "./render/leafAtlas";
 
 const params = new URLSearchParams(location.search);
 const AUTOPLAY = params.has("autoplay") && params.get("autoplay") !== "0";
@@ -28,6 +29,7 @@ renderer.autoClear = true;
 renderer.info.autoReset = false;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
+G.uLeafTex.value = leafAtlas(renderer);
 
 const loader = new Loader(SKIP_INTRO);
 (window as unknown as { __loader: Loader }).__loader = loader;
@@ -78,7 +80,9 @@ const camParam = params.get("cam");
 if (camParam === "fpp") {
   chase.fpp = 1;
 } else if (camParam) chase.mode = camParam as CamMode;
-const post = new Post(renderer, innerWidth, innerHeight, { kuwahara: KUWA });
+const post = new Post(renderer, innerWidth, innerHeight, { kuwahara: KUWA, msaa: Number(params.get("msaa") ?? 4) });
+const MSAA_PINNED = params.has("msaa");
+let msaaStepAt = 0;
 {
   const s = performance.now();
   let done = 0;
@@ -217,6 +221,15 @@ function frame(now: number) {
   if (fpsT >= 1) {
     fps = frames / fpsT;
     fpsLog.push(Math.round(fps));
+    // Adaptive AA: MSAA x4 while the GPU keeps up; step down (x2, then SMAA only) if a
+    // 3-second window stays under the frame target. Pinned with ?msaa=N.
+    if (!MSAA_PINNED && fpsLog.length > 3 && fpsLog.length - msaaStepAt >= 3) {
+      const last = fpsLog.slice(-3).reduce((a, c) => a + c, 0) / 3;
+      if (last < 72 && post.msaa > 0) {
+        post.setMsaa(post.msaa > 2 ? 2 : 0);
+        msaaStepAt = fpsLog.length;
+      }
+    }
     frames = 0;
     fpsT = 0;
   }
@@ -250,6 +263,11 @@ declare global {
   }
 }
 window.__ride = {
+  scene,
+  post,
+  get msaa() {
+    return post.msaa;
+  },
   get ready() {
     return warm >= WARM_FRAMES;
   },
@@ -285,6 +303,17 @@ window.__ride = {
   },
   toggleView() {
     chase.toggle();
+  },
+  /** Exact framing for captures: eye and target as world offsets from the rider (ground level). */
+  view(px: number, py: number, pz: number, lx: number, ly: number, lz: number) {
+    chase.fpp = 0;
+    chase.mode = "custom";
+    chase.customPos.set(px, py, pz);
+    chase.customLook.set(lx, ly, lz);
+  },
+  /** Absolute world X of the road centre at z (to aim captures at roadside things). */
+  roadX(z: number) {
+    return roadX(z);
   },
   get fppBlend() {
     return chase.fppBlend;

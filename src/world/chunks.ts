@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { CHUNK, L, NCHUNK, RIBBON_HALF, faceRoadFromRight, groundH, pnoise, roadX, roadYaw, smooth } from "./road";
 import { ID, M, box, merge, prep, shear, wire, xf } from "./geo";
-import { fence, house, pole, postBox, stoneMarker, tree, warningSign, type TreeKind } from "./props";
-import { boulder, butterfly, flower, flowerSpike, fringeGrass, grassClump, riceTuft, shortGrass, vergeClump } from "./vegetation";
+import { bambooGrove, farHouse, fence, house, pole, postBox, scarecrow, school, shed, stoneMarker, tree, warningSign, waterTower, type TreeKind } from "./props";
+import { boulder, butterfly, floretCluster, flower, flowerSpike, fringeGrass, grassClump, leafPlant, riceTuft, shortGrass, vergeClump } from "./vegetation";
 import { roadMaterial, uber, waterMaterial } from "../render/materials";
 import { LAYER_REFLECT, LAYER_SHADOW, onLayers } from "../render/lightpasses";
 import { mulberry32, pick, range, type Rng } from "../core/rng";
@@ -116,6 +116,11 @@ let protos: {
   fly: Geo;
   spike: Geo;
   rocks: Geo[];
+  lance: Geo[];
+  broad: Geo[];
+  florets: Geo[];
+  hydrangea: Geo;
+  bamboo: Geo;
 } | null = null;
 
 const protoCache = new Map<string, Geo>();
@@ -133,8 +138,8 @@ const PROTO = {
     cedar: [T("cedar", 8), T("cedar", 9)],
   },
   far: {
-    round: [T("round", 11, 1), T("round", 12, 1)],
-    tall: [T("tall", 14, 1)],
+    round: [T("round", 11, 1), T("round", 12, 1), T("round", 13, 1)],
+    tall: [T("tall", 14, 1), T("tall", 15, 1)],
     bush: [T("bush", 16, 1)],
     cedar: [T("cedar", 18, 1), T("cedar", 19, 1)],
   },
@@ -147,6 +152,17 @@ const PROTO = {
   fly: memo("fly", () => butterfly()),
   spike: memo("spike", () => flowerSpike(9)),
   rocks: [memo("r1", () => boulder(1)), memo("r2", () => boulder(2.7))],
+  lance: [memo("l1", () => leafPlant(31, "lance")), memo("l2", () => leafPlant(32, "lance"))],
+  broad: [memo("b1", () => leafPlant(41, "broad")), memo("b2", () => leafPlant(42, "broad"))],
+  // Floret sprays: aster, fleabane, red spray, tall golden-rod-ish, hydrangea head clusters.
+  florets: [
+    memo("f1", () => floretCluster(51, 44, 0.75, 0.034)),
+    memo("f2", () => floretCluster(52, 30, 0.55, 0.03)),
+    memo("f3", () => floretCluster(53, 24, 0.5, 0.04)),
+    memo("f4", () => floretCluster(54, 36, 0.95, 0.03)),
+  ],
+  hydrangea: memo("hy", () => floretCluster(61, 90, 0.95, 0.075)),
+  bamboo: memo("bam", () => bambooGrove(71)),
 };
 
 /** Every shared prototype as a separate build step, so a loader can yield between them. */
@@ -176,6 +192,11 @@ function getProtos() {
       fly: PROTO.fly(),
       spike: PROTO.spike(),
       rocks: PROTO.rocks.map((f) => f()),
+      lance: PROTO.lance.map((f) => f()),
+      broad: PROTO.broad.map((f) => f()),
+      florets: PROTO.florets.map((f) => f()),
+      hydrangea: PROTO.hydrangea(),
+      bamboo: PROTO.bamboo(),
     };
   }
   return protos;
@@ -467,10 +488,30 @@ export function buildChunk(k: number): Chunk {
   }
   // Far fields beyond the terraces.
   const uFar = BERM0 - NROWS * ROW_P;
-  waterG.push(waterPlane(uFar, uFar - 330, z0, z1, 0.75, 0.8));
-  for (let z = z0 - 10; z > z1; z -= 40) bermG.push(bermAlongU(z, uFar, uFar - 330, 0.95));
+  const farProps: Geo[] = [];
   bermG.push(bermAlongZ(uFar, z0, z1, 0.95, 1.0));
-  for (let u = uFar - 30; u > uFar - 330; u -= 36) bermG.push(bermAlongZ(u, z0, z1, 0.95, 0.8));
+  {
+    // Irregular far paddies: strips of uneven length, each cut across at its own uneven widths,
+    // levels stepping slightly (terraces), rice at different growth, some wide farm paths.
+    const fr = mulberry32(Math.round(z0) * 7 + 3);
+    let za = z0;
+    while (za > z1 + 1) {
+      const zb = Math.max(z1, za - range(fr, 16, 48));
+      let ua = uFar;
+      while (ua > uFar - 330) {
+        const ub = Math.max(uFar - 330, ua - range(fr, 16, 58));
+        const lvl = 0.66 + fr() * 0.16;
+        waterG.push(waterPlane(ua, ub, za, zb, lvl, range(fr, 0.35, 1.0)));
+        if (ub > uFar - 330) bermG.push(bermAlongZ(ub, za, zb, 0.95, fr() > 0.85 ? 2.4 : range(fr, 0.6, 1.0)));
+        const cu = (ua + ub) / 2, cz = (za + zb) / 2;
+        if (fr() > 0.93) farProps.push(placeAt(scarecrow(Math.floor(fr() * 1e4)), cu + range(fr, -4, 4), cz, fr() * 6.28, lvl - 0.2));
+        if (fr() > 0.94) farProps.push(placeAt(shed(Math.floor(fr() * 1e4)), ub + 2, zb + 2, roadYaw(cz) + range(fr, -0.3, 0.3), 0.9));
+        ua = ub;
+      }
+      if (zb > z1) bermG.push(bermAlongU(zb, uFar, uFar - 330, 0.95));
+      za = zb;
+    }
+  }
 
   // ---- houses (right)
   for (const h of HOUSES) {
@@ -627,12 +668,51 @@ export function buildChunk(k: number): Chunk {
     addTree(pick(r, ["round", "tall", "bush"] as TreeKind[]), u, z, range(r, 0.8, 1.3));
   }
   // Groves out in the far fields (farmstead windbreaks) so the horizon isn't a flat line.
-  for (let gi = 0; gi < 2; gi++) {
-    const gz = range(r, z1, z0);
-    const gu = range(r, uFar - 50, uFar - 240);
-    for (let i = 0; i < 9; i++) addTree(r() > 0.45 ? "round" : "cedar", gu + range(r, -14, 14), gz + range(r, -12, 12), range(r, 1.0, 1.7), true);
+  // Farmstead hamlets across the fields: roofs at different heights/angles inside a grove, with a
+  // cedar windbreak on the north side and a bamboo clump.
+  const bamboo = newInst();
+  const hamlet = (gu: number, gz: number, nHouses: number) => {
+    const yaw = roadYaw(gz) + range(r, -0.5, 0.5);
+    for (let i = 0; i < nHouses; i++) {
+      const hu = gu + range(r, -16, 16), hz = gz + range(r, -14, 14);
+      farProps.push(placeAt(farHouse(Math.floor(r() * 1e5)), hu, hz, yaw + (r() > 0.5 ? Math.PI / 2 : 0) + range(r, -0.15, 0.15), 0.75));
+    }
+    for (let i = 0; i < 10; i++) addTree(pick(r, ["round", "round", "tall"] as TreeKind[]), gu + range(r, -22, 22), gz + range(r, -18, 18), range(r, 0.9, 1.6), true);
+    // Windbreak: a tight line of cedars along one side.
+    const side = r() > 0.5 ? 1 : -1;
+    for (let i = 0; i < 9; i++) addTree("cedar", gu + side * 22 + range(r, -1.5, 1.5), gz - 20 + i * 5 + range(r, -1, 1), range(r, 1.0, 1.4), true);
+    for (let i = 0; i < 2; i++) {
+      const bz = gz + range(r, -16, 16);
+      pushInst(bamboo, roadX(bz) + gu - side * range(r, 16, 26), 0.6, bz, r() * 6.28, range(r, 0.9, 1.3), undefined, hsl(col("#ffffff"), r, 0.02, 0.05, 0.06));
+    }
+  };
+  hamlet(range(r, uFar - 70, uFar - 150), range(r, z1 + 30, z0 - 30), 4 + Math.floor(r() * 3));
+  if (r() > 0.4) hamlet(range(r, uFar - 170, uFar - 280), range(r, z1 + 30, z0 - 30), 3 + Math.floor(r() * 3));
+  // Hedgerows / tree lines along a few far berms instead of evenly spaced single balls.
+  for (let k = 0; k < 2; k++) {
+    const lu = range(r, uFar - 40, uFar - 300);
+    const za = range(r, z1, z0), len = range(r, 40, 90);
+    for (let z = za; z > za - len && z > z1; z -= range(r, 4, 7)) addTree(r() > 0.3 ? "round" : "tall", lu + range(r, -1.5, 1.5), z, range(r, 0.7, 1.1), true);
   }
-  for (let i = 0; i < 4; i++) addTree("round", range(r, uFar - 40, uFar - 260), range(r, z1, z0), range(r, 1.0, 1.5), true);
+  // Village school + water tower out at the far edge, once per world period.
+  if (inRange(-260)) {
+    farProps.push(placeAt(school(), uFar - 200, -260, roadYaw(-260) + Math.PI / 2 + 0.3, 0.75));
+    farProps.push(placeAt(waterTower(), uFar - 150, -300, 0, 0.75));
+    for (let i = 0; i < 8; i++) addTree("round", uFar - 200 + range(r, -30, 30), -260 + range(r, -35, 35), range(r, 1.0, 1.6), true);
+  }
+  // Receding power line across the fields toward the hamlets.
+  if (inRange(-150)) {
+    for (let i = 0; i < 7; i++) {
+      const pu = uFar - 10 - i * 42, pz = -150 - i * 9;
+      const pa = pole(8.5, false);
+      farProps.push(placeAt(pa.geo, pu, pz, roadYaw(pz) + 0.2, 0.7));
+      if (i > 0) {
+        const qu = pu + 42, qz = pz + 9;
+        const A = new THREE.Vector3(roadX(qz) + qu, 8.5, qz), B = new THREE.Vector3(roadX(pz) + pu, 8.5, pz);
+        for (const dx of [-0.7, 0.7]) wireG.push(...wire(A.clone().setX(A.x + dx * 0.2), B.clone().setX(B.x + dx * 0.2), 1.2, 0.03, "#2a2622", 10));
+      }
+    }
+  }
 
   // ---- grass, flowers, butterflies
   const grass = [newInst(), newInst(), newInst()];
@@ -681,8 +761,32 @@ export function buildChunk(k: number): Chunk {
   const FLOWER = ["#f7f3ea", "#f7f3ea", "#f3d23c", "#f3d23c", "#ec8fb6", "#b09ae0", "#f39a3c"].map(col);
   const addFlower = (u: number, z: number) => {
     if (inHouse(u, z, 0.2)) return;
-    pushInst(flowers, roadX(z) + u, groundH(u, z) + range(r, 0.35, 0.85), z, r() * 6.28, range(r, 0.8, 1.4), undefined, pick(r, FLOWER));
+    const s = range(r, 0.6, 1.3);
+    pushInst(flowers, roadX(z) + u, groundH(u, z) + 0.62 * s - 0.03, z, r() * 6.28, s, undefined, pick(r, FLOWER));
   };
+  // Undergrowth species + floret sprays along both verges (layered like the reference verges).
+  const lance = [newInst(), newInst()], broad = [newInst(), newInst()];
+  const florets = [newInst(), newInst(), newInst(), newInst()];
+  const FLORET = [
+    ["#b7a4ec", "#c9b8f4", "#a893e4"],
+    ["#f6f3ea", "#fbf6e6"],
+    ["#e8503e", "#f07a4a", "#e0443a"],
+    ["#f2c93a", "#f6d860"],
+  ].map((l) => l.map(col));
+  const plantAt = (u: number, z: number) => {
+    if (inHouse(u, z, 0.3) || (inVillage(z) && u > 3.4 && u < 7 && nearShopFront(z))) return;
+    const y = groundH(u, z) - 0.02, x = roadX(z) + u;
+    const k = r();
+    if (k < 0.3) pushInst(lance[Math.floor(r() * 2)], x, y, z, r() * 6.28, range(r, 0.7, 1.2), undefined, hsl(gBase, r, 0.02, 0.06, 0.06));
+    else if (k < 0.55) pushInst(broad[Math.floor(r() * 2)], x, y, z, r() * 6.28, range(r, 0.7, 1.1), undefined, hsl(gBase, r, 0.02, 0.06, 0.06));
+    else {
+      const fi = Math.floor(r() * 4);
+      pushInst(florets[fi], x, y, z, r() * 6.28, range(r, 0.75, 1.25), undefined, pick(r, FLORET[fi]));
+    }
+  };
+  for (let i = 0; i < 190; i++) plantAt(range(r, 2.95, 6.4), range(r, z1, z0));
+  for (let i = 0; i < 70; i++) plantAt(range(r, -4.5, -2.95), range(r, z1, z0));
+  for (let i = 0; i < 40; i++) plantAt(range(r, 6.4, 22), range(r, z1, z0));
   for (let i = 0; i < 260; i++) addFlower(range(r, 2.9, 5.8), range(r, z1, z0));
   for (let i = 0; i < 130; i++) addFlower(range(r, -4.5, -2.9), range(r, z1, z0));
   for (let i = 0; i < 120; i++) addFlower(range(r, 6, 26), range(r, z1, z0));
@@ -690,9 +794,9 @@ export function buildChunk(k: number): Chunk {
   const spikes = newInst();
   const rocks = [newInst(), newInst()];
   const SPIKE = ["#a898e2", "#a898e2", "#b9a8ee", "#e06a6a", "#f09ab8"].map(col);
-  const FLY = [col("#f2d04a"), col("#f2d04a"), col("#fff4c0"), col("#fff4c0")];
+  const FLY = [col("#f2d04a"), col("#f2d04a"), col("#f6dc5a"), col("#fff4c0"), col("#fff4c0"), col("#f7f7ef"), col("#f39a3c")];
   const patches: { u: number; z: number }[] = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 9; i++) {
     const left = r() < 0.35;
     patches.push({ u: left ? range(r, -4.3, -3.2) : range(r, 3.4, 6.5), z: range(r, z1 + 4, z0 - 4) });
   }
@@ -704,9 +808,15 @@ export function buildChunk(k: number): Chunk {
       const z = p.z + range(r, -2.2, 2.2);
       pushInst(spikes, roadX(z) + u, groundH(u, z) - 0.05, z, r() * 6.28, range(r, 0.8, 1.35), undefined, r() > 0.25 ? pc : pick(r, SPIKE));
     }
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 12; i++) {
       const z = p.z + range(r, -2.5, 2.5);
-      pushInst(flies, roadX(z) + p.u + range(r, -1, 1), range(r, 0.7, 1.5), z, r() * 6.28, range(r, 0.45, 0.6), undefined, pick(r, FLY));
+      pushInst(flies, roadX(z) + p.u + range(r, -1.4, 1.4), range(r, 0.5, 1.5), z, r() * 6.28, range(r, 0.3, 0.5), undefined, pick(r, FLY));
+    }
+    // Floret sprays packed into the patch.
+    for (let i = 0; i < 10; i++) {
+      const fi = Math.floor(r() * 4);
+      const z = p.z + range(r, -2.4, 2.4), u = p.u + range(r, -1.2, 1.2) * (p.u < 0 ? 0.6 : 1);
+      if (!inHouse(u, z, 0.3)) pushInst(florets[fi], roadX(z) + u, groundH(u, z) - 0.02, z, r() * 6.28, range(r, 0.8, 1.3), undefined, pick(r, FLORET[fi]));
     }
     // Mossy boulder anchoring the patch (away from the road edge).
     if (r() > 0.35) {
@@ -714,10 +824,22 @@ export function buildChunk(k: number): Chunk {
       pushInst(rocks[Math.floor(r() * 2)], roadX(p.z) + u, groundH(u, p.z) - 0.1, p.z + range(r, -1, 1), r() * 6.28, range(r, 0.45, 0.9));
     }
   }
-  for (let i = 0; i < 10; i++) {
-    const u = r() > 0.35 ? range(r, 3.2, 6.5) : range(r, -4.4, -3.0);
+  // Dozens of tiny butterflies scattered over the verges and meadow (as in the reference frames).
+  for (let i = 0; i < 46; i++) {
+    const u = r() > 0.35 ? range(r, 3.0, 12) : range(r, -4.6, -2.9);
     const z = range(r, z1, z0);
-    pushInst(flies, roadX(z) + u, range(r, 0.55, 1.3), z, r() * 6.28, range(r, 0.42, 0.55), undefined, pick(r, FLY));
+    pushInst(flies, roadX(z) + u, range(r, 0.4, 1.4), z, r() * 6.28, range(r, 0.28, 0.45), undefined, pick(r, FLY));
+  }
+  // Hydrangea shrubs by the houses: leafy bush + big blue/violet flower heads.
+  const hyd = newInst();
+  const HYD = ["#6f8ee6", "#8f84e0", "#a79ae8", "#7aa6e8"].map(col);
+  for (const h of HOUSES) {
+    if (!inRange(h.z)) continue;
+    for (let i = 0; i < 4; i++) {
+      const u = h.u - range(r, 0.2, 1.0), z = h.z + h.d / 2 + range(r, 0.6, 3.6);
+      pushInst(hyd, roadX(z) + u, groundH(u, z) - 0.05, z, r() * 6.28, range(r, 0.8, 1.1), undefined, pick(r, HYD));
+      addTree("bush", u + range(r, -0.3, 0.3), z + range(r, -0.4, 0.4), range(r, 0.45, 0.6));
+    }
   }
   // Scattered boulders in the meadow and at the foot of trees.
   for (let i = 0; i < 6; i++) {
@@ -735,6 +857,8 @@ export function buildChunk(k: number): Chunk {
     group.add(o);
   };
   if (houseG.length) add(mesh(merge(houseG), uber(ID.house, 1)), S, R);
+  if (farProps.length) add(mesh(merge(farProps), uber(ID.house, 1)));
+  add(instMesh(P.bamboo, uber(ID.tree, -1, THREE.DoubleSide), bamboo));
   if (infraG.length) add(mesh(merge(infraG), uber(ID.pole, 1)), S, R);
   if (wireG.length) add(mesh(merge(wireG), uber(ID.wire, 0.8)), S, R);
   if (fenceG.length) add(mesh(merge(fenceG), uber(ID.fence, 1, THREE.DoubleSide)), S, R);
@@ -748,7 +872,12 @@ export function buildChunk(k: number): Chunk {
   for (let i = 0; i < 3; i++) add(instMesh(P.verge[i], uber(ID.grass, -1, dbl), verge[i]));
   add(instMesh(P.flower, uber(ID.flower, -1, dbl), flowers));
   add(instMesh(P.fly, uber(ID.butterfly, -1, dbl), flies));
-  add(instMesh(P.spike, uber(ID.flower, -1), spikes));
+  add(instMesh(P.spike, uber(ID.flower, -1, dbl), spikes));
+  const plantMat = uber(ID.tree, -1, dbl);
+  for (let i = 0; i < 2; i++) add(instMesh(P.lance[i], plantMat, lance[i]), S);
+  for (let i = 0; i < 2; i++) add(instMesh(P.broad[i], plantMat, broad[i]), S);
+  for (let i = 0; i < 4; i++) add(instMesh(P.florets[i], uber(ID.flower, -1, dbl), florets[i]));
+  add(instMesh(P.hydrangea, uber(ID.flower, -1, dbl), hyd));
   for (let i = 0; i < 2; i++) add(instMesh(P.rocks[i], uber(ID.fence, 1), rocks[i]), S);
   const treeMat = uber(ID.tree, 0.8, dbl);
   for (const [key, list] of Object.entries(trees)) {

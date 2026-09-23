@@ -1,6 +1,8 @@
 import * as THREE from "three";
-import { M, merge, prep, windByHeight } from "./geo";
+import { M, beam, merge, prep, windByHeight } from "./geo";
 import { mulberry32, range } from "../core/rng";
+import { leafCard } from "./props";
+import { LEAF_CELL } from "../render/leafAtlas";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 
 type Geo = THREE.BufferGeometry;
@@ -9,6 +11,7 @@ const _c1 = new THREE.Color();
 
 /** Clump of curved tapered blades with a dark-root → bright-tip gradient. Base at y=0, height ~1. */
 const _cm = new THREE.Color();
+const _tipWarm = new THREE.Color("#a8c860");
 
 function blades(n: number, h: number, w: number, lean: number, root: string, tip: string, seed: number, spread: number, mid?: string, seg = 3): Geo {
   const r = mulberry32(seed);
@@ -28,6 +31,11 @@ function blades(n: number, h: number, w: number, lean: number, root: string, tip
     // Blade plane faces perpendicular to its lean direction.
     const px = -dirz, pz = dirx;
     const start = pos.length / 3;
+    // Per-blade tip hue: some catch warm yellow-green light, some stay deep blue-green.
+    const tv = r();
+    _c1.set(tip);
+    if (tv > 0.72) _c1.lerp(_tipWarm, 0.55);
+    else if (tv < 0.25) _c1.multiplyScalar(0.72);
     for (let i = 0; i <= seg; i++) {
       const t = i / seg;
       const y = bh * t;
@@ -57,10 +65,10 @@ function blades(n: number, h: number, w: number, lean: number, root: string, tip
   return g;
 }
 
-export const grassClump = (seed: number) => blades(9, 0.85, 0.045, 0.12, "#1f3d22", "#6f9a3e", seed, 0.14, "#33602c", 2);
+export const grassClump = (seed: number) => blades(10, 0.85, 0.036, 0.12, "#1f3d22", "#6f9a3e", seed, 0.14, "#33602c", 2);
 /** Tall right-verge clump, height 1 (instances scale it to 0.4-1.3 m): a dense outward fan. */
-export const vergeClump = (seed: number) => blades(12, 1.0, 0.048, 0.17, "#1f3d22", "#6f9a3e", seed, 0.18, "#30592a", 2);
-export const shortGrass = (seed: number) => blades(6, 0.4, 0.04, 0.2, "#22412a", "#6f9a3e", seed, 0.1, "#386530");
+export const vergeClump = (seed: number) => blades(13, 1.0, 0.038, 0.17, "#1f3d22", "#6f9a3e", seed, 0.18, "#30592a", 2);
+export const shortGrass = (seed: number) => blades(7, 0.4, 0.034, 0.2, "#22412a", "#6f9a3e", seed, 0.1, "#386530");
 /** Low grass fringe along the paddy bank tops. */
 export const fringeGrass = (seed: number) => blades(5, 0.32, 0.036, 0.3, "#2a4a24", "#7a9c44", seed, 0.1, "#436a2e", 2);
 
@@ -111,11 +119,74 @@ export function riceTuft(seed: number): Geo {
 /** Wildflower head: small star of petals on a thin stem. */
 /** Wildflower: alpha-cut five-petal card facing up/out on a thin stem (instance origin = bloom). */
 export function flower(): Geo {
+  // Instance origin = bloom, planted 0.62 m (x scale) above the ground: the stem always reaches it.
   const card = new THREE.PlaneGeometry(0.13, 0.13);
   card.rotateX(-Math.PI / 2 + 0.55);
-  const stem = new THREE.CylinderGeometry(0.005, 0.007, 0.7, 3, 1);
-  stem.translate(0, -0.36, 0);
-  return merge([prep(card, "#ffffff", M.flower), prep(stem, "#3f6a2a", M.plain, 0.6)]);
+  const stem = new THREE.CylinderGeometry(0.005, 0.008, 0.7, 3, 1);
+  stem.translate(0, -0.35, 0);
+  const base = blades(5, 0.26, 0.035, 0.35, "#24452a", "#5f8a3a", 71, 0.05, "#35602c", 2);
+  base.translate(0, -0.64, 0);
+  return merge([prep(card, "#ffffff", M.flower), prep(stem, "#3f6a2a", M.plain, 0.6), base]);
+}
+
+/**
+ * Undergrowth plant from painted atlas leaves: `lance` = tall stems with long narrow alternate
+ * leaves (knotweed / reed-like), `broad` = low rosette of big broad leaves (butterbur / hosta-like).
+ */
+export function leafPlant(seed: number, kind: "lance" | "broad"): Geo {
+  const r = mulberry32(seed);
+  const parts: Geo[] = [];
+  const cols = ["#1e3f2a", "#244a2c", "#2a5230", "#1b3a28"];
+  if (kind === "lance") {
+    for (let s = 0; s < 4; s++) {
+      const a = r() * Math.PI * 2;
+      const h = range(r, 0.7, 1.15);
+      const top = new THREE.Vector3(Math.cos(a) * h * 0.18, h, Math.sin(a) * h * 0.18);
+      parts.push(beam(new THREE.Vector3(Math.cos(a) * 0.04, 0, Math.sin(a) * 0.04), top, 0.009, "#3f6a2c", M.plain, 3, 0.004));
+      for (let i = 0; i < 5; i++) {
+        const t = 0.25 + i * 0.16;
+        const c = top.clone().multiplyScalar(t);
+        const out = new THREE.Vector3(Math.cos(a + i * 2.2), 0.55, Math.sin(a + i * 2.2)).normalize();
+        parts.push(leafCard(c.clone().addScaledVector(out, 0.14), out, range(r, 0.36, 0.5), cols[i % 4], new THREE.Vector3(out.x, 0.8, out.z).normalize(), range(r, -0.5, 0.5), M.leafCard, LEAF_CELL.lance));
+      }
+    }
+  } else {
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + r() * 0.5;
+      const out = new THREE.Vector3(Math.cos(a), range(r, 0.6, 1.1), Math.sin(a)).normalize();
+      const c = new THREE.Vector3(Math.cos(a) * 0.18, range(r, 0.18, 0.36), Math.sin(a) * 0.18);
+      parts.push(leafCard(c, out, range(r, 0.42, 0.6), cols[i % 4], new THREE.Vector3(out.x * 0.4, 1, out.z * 0.4).normalize(), range(r, -0.4, 0.4), M.leafCard, LEAF_CELL.broad));
+    }
+  }
+  const g = merge(parts);
+  windByHeight(g, 0, 1.1, 0.6, 1.5);
+  return g;
+}
+
+/**
+ * Floret cluster (aster / fleabane spray, red spray): branching stems carrying many tiny daisy
+ * cards, leafy base. Base at y=0; instance colour tints the florets.
+ */
+export function floretCluster(seed: number, n: number, h: number, size: number): Geo {
+  const r = mulberry32(seed);
+  const parts: Geo[] = [blades(7, h * 0.45, 0.04, 0.3, "#22412a", "#5f8a3a", seed + 3, 0.08, "#35602c", 2)];
+  const stems = 5;
+  for (let s = 0; s < stems; s++) {
+    const a = (s / stems) * Math.PI * 2 + r();
+    const top = new THREE.Vector3(Math.cos(a) * range(r, 0.05, 0.16), h * range(r, 0.75, 1.0), Math.sin(a) * range(r, 0.05, 0.16));
+    parts.push(beam(new THREE.Vector3(0, 0, 0), top, 0.006, "#3e6a2c", M.plain, 3, 0.003));
+    for (let i = 0; i < n / stems; i++) {
+      const c = top.clone().add(new THREE.Vector3(range(r, -1, 1), range(r, -0.8, 0.5), range(r, -1, 1)).multiplyScalar(h * 0.14));
+      const card = new THREE.PlaneGeometry(size, size);
+      card.rotateX(-Math.PI / 2 + range(r, 0.3, 0.9));
+      card.rotateY(r() * Math.PI * 2);
+      card.translate(c.x, c.y, c.z);
+      parts.push(prep(card, i % 7 === 0 ? "#e8e0f0" : "#ffffff", M.flower));
+    }
+  }
+  const g = merge(parts);
+  windByHeight(g, 0, h, 0.7, 1.4);
+  return g;
 }
 
 /** Light mote / seed fluff billboard (placed + wrapped around the camera in the vertex shader). */
@@ -127,17 +198,26 @@ export function mote(): Geo {
 export function flowerSpike(seed: number): Geo {
   const r = mulberry32(seed);
   const parts: Geo[] = [];
-  const stem = new THREE.CylinderGeometry(0.008, 0.012, 0.7, 4, 1);
-  stem.translate(0, 0.35, 0);
+  const stem = new THREE.CylinderGeometry(0.007, 0.011, 0.8, 4, 1);
+  stem.translate(0, 0.4, 0);
   parts.push(prep(stem, "#4d7a2c", M.plain));
-  for (let i = 0; i < 7; i++) {
-    const t = i / 6;
-    const g = new THREE.IcosahedronGeometry(0.045 * (1 - t * 0.55), 0);
-    g.translate(range(r, -0.02, 0.02), 0.45 + t * 0.32, range(r, -0.02, 0.02));
-    parts.push(prep(g, "#ffffff", M.plain));
+  // Palmate leaf rosette at the foot, so the spike grows out of a plant, not out of bare ground.
+  parts.push(blades(8, 0.3, 0.05, 0.45, "#22412a", "#5f8a3a", seed + 5, 0.06, "#35602c", 2));
+  // Dense tapering column of tiny pea-flower florets.
+  for (let i = 0; i < 26; i++) {
+    const t = i / 25;
+    const y = 0.42 + t * 0.38;
+    const a = i * 2.4 + r();
+    const rad = 0.035 * (1 - t * 0.6);
+    const card = new THREE.PlaneGeometry(0.045 * (1 - t * 0.4), 0.045 * (1 - t * 0.4));
+    card.rotateX(-0.4);
+    card.rotateY(a);
+    card.translate(Math.cos(a) * rad, y, Math.sin(a) * rad);
+    parts.push(prep(card, i % 5 === 0 ? "#f0eaf6" : "#ffffff", M.flower));
   }
-  // mergeGeometries lives in geo.ts' merge(); inline here to keep the prototype self-contained.
-  return mergeSimple(parts);
+  const g = merge(parts);
+  windByHeight(g, 0, 0.8, 0.5, 1.5);
+  return g;
 }
 
 /** Mossy boulder: lumpy flattened blob, moss-green on top, purple-grey shadowed stone below. */

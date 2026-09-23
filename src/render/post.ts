@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
-import { FXAAShader } from "three/addons/shaders/FXAAShader.js";
+import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
 
 const FS_VS = /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 
@@ -15,19 +15,33 @@ export class Post {
   readonly composer: EffectComposer;
   private ink: ShaderPass;
   private grade: ShaderPass;
-  private fxaa: ShaderPass;
+  private smaa: SMAAPass;
+  private sharpen: ShaderPass;
   readonly bloom: UnrealBloomPass;
   sceneCalls = 0;
   sceneTris = 0;
 
-  constructor(private renderer: THREE.WebGLRenderer, w: number, h: number, opts: { kuwahara: boolean }) {
+  get msaa(): number {
+    return this.mrt.samples;
+  }
+
+  /** Change scene-pass MSAA at runtime (the target re-allocates on next use); SMAA covers 0. */
+  setMsaa(n: number): void {
+    if (this.mrt.samples === n) return;
+    this.mrt.samples = n;
+    this.mrt.dispose();
+    this.smaa.enabled = n === 0;
+  }
+
+  constructor(private renderer: THREE.WebGLRenderer, w: number, h: number, opts: { kuwahara: boolean; msaa?: number }) {
     const pr = renderer.getPixelRatio();
     const W = Math.floor(w * pr), H = Math.floor(h * pr);
     this.mrt = new THREE.WebGLRenderTarget(W, H, {
       count: 2,
       type: THREE.HalfFloatType,
       depthTexture: new THREE.DepthTexture(W, H, THREE.UnsignedIntType),
-      samples: 0,
+      // MSAA on the scene pass: thin blades, wires and lattice resolve without sub-pixel crawl.
+      samples: opts.msaa ?? 4,
     });
     this.mrt.textures[0].name = "color";
     this.mrt.textures[1].name = "normal";
@@ -58,27 +72,28 @@ export class Post {
         float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 
         // 4-sector Kuwahara (radius 2): flattens texture into gouache-like patches, keeps edges.
-        vec3 kuwahara(vec2 uv){
+        vec4 kuwahara(vec2 uv){
           vec2 px = 1.0 / uRes;
           vec3 m[4]; float s[4];
           for (int k = 0; k < 4; k++){
             vec2 dir = vec2(k == 1 || k == 2 ? -1.0 : 1.0, k >= 2 ? -1.0 : 1.0);
             vec3 sum = vec3(0.0); float sq = 0.0;
-            for (int j = 0; j <= 3; j++) for (int i = 0; i <= 3; i++){
+            for (int j = 0; j <= 2; j++) for (int i = 0; i <= 2; i++){
               vec3 c = texture2D(tColor, uv + vec2(float(i), float(j)) * dir * px).rgb;
               sum += c; float l = lum(c); sq += l * l;
             }
-            vec3 mean = sum / 16.0; float lm = lum(mean);
-            m[k] = mean; s[k] = sq / 16.0 - lm * lm;
+            vec3 mean = sum / 9.0; float lm = lum(mean);
+            m[k] = mean; s[k] = sq / 9.0 - lm * lm;
           }
           vec3 best = m[0]; float bs = s[0];
           for (int k = 1; k < 4; k++) if (s[k] < bs) { bs = s[k]; best = m[k]; }
-          return best;
+          // Even the calmest sector is busy: this is real detail (lattice, leaves, tiles), keep it.
+          return vec4(best, bs);
         }
 
         void main(){
           vec2 px = uWidth / uRes;
-          vec3 col = uKuwa > 0.5 ? kuwahara(vUv) : texture2D(tColor, vUv).rgb;
+          vec3 col = texture2D(tColor, vUv).rgb;
           float dC = linz(texture2D(tDepth, vUv).r);
           float iC = 1.0 / dC;
           vec4 nC = texture2D(tNormal, vUv);
@@ -101,6 +116,16 @@ export class Post {
           if (nC.a < 0.0) mask = 0.0;
           float e = max(smoothstep(0.05, 0.16, eD), smoothstep(0.55, 1.0, eN));
           e = max(e, min(eI, 1.0));
+          // Paint filter: a light gouache flattening on calm mid/far surfaces only. It stays off
+          // near the camera, on ink edges and on fine detail (it boils frame to frame there).
+          if (uKuwa > 0.5) {
+            float wK = 0.5 * smoothstep(6.0, 40.0, dC) * (1.0 - clamp(max(e, min(eI, 1.0)) * 1.5, 0.0, 1.0));
+            if (wK > 0.02) {
+              vec4 k = kuwahara(vUv);
+              wK *= 1.0 - smoothstep(0.0015, 0.012, k.a);
+              col = mix(col, k.rgb, wK);
+            }
+          }
           float fade = 1.0 - smoothstep(60.0, 420.0, dC) * 0.75;
           e *= clamp(mask, 0.0, 1.0) * fade;
           vec3 inkCol = mix(col * 0.22, uInk, 0.55);
@@ -147,15 +172,39 @@ export class Post {
           float paper = vn(fc * 0.35) * 0.5 + vn(fc * 0.09 + 7.0) * 0.5;
           float fib = vn(vec2(fc.x * 0.02, fc.y * 0.6));
           s *= 0.975 + paper * 0.04 + fib * 0.012;
-          s += (h12(fc + fract(uTime) * 100.0) - 0.5) * 0.012;
+          s += (h12(fc) - 0.5) * 0.01;
           gl_FragColor = vec4(clamp(s, 0.0, 1.0), 1.0);
         }`,
     });
     this.composer.addPass(this.grade);
 
-    this.fxaa = new ShaderPass(FXAAShader);
-    this.fxaa.material.uniforms["resolution"].value.set(1 / W, 1 / H);
-    this.composer.addPass(this.fxaa);
+    // SMAA keeps thin lines (wires, lattice, blades) crisp where FXAA smeared them.
+    this.smaa = new SMAAPass();
+    // With MSAA on the scene pass, SMAA only re-softens already resolved edges.
+    this.smaa.enabled = !(opts.msaa ?? 4);
+    this.composer.addPass(this.smaa);
+    // Mild contrast-adaptive sharpening (AMD CAS style): recovers texture after AA without halos.
+    this.sharpen = new ShaderPass({
+      uniforms: { tDiffuse: { value: null }, uTexel: { value: new THREE.Vector2(1 / W, 1 / H) }, uAmount: { value: 0.45 } },
+      vertexShader: FS_VS,
+      fragmentShader: /* glsl */ `
+        uniform sampler2D tDiffuse; uniform vec2 uTexel; uniform float uAmount;
+        varying vec2 vUv;
+        void main(){
+          vec3 c = texture2D(tDiffuse, vUv).rgb;
+          vec3 n = texture2D(tDiffuse, vUv + vec2(0.0, uTexel.y)).rgb;
+          vec3 s = texture2D(tDiffuse, vUv - vec2(0.0, uTexel.y)).rgb;
+          vec3 e = texture2D(tDiffuse, vUv + vec2(uTexel.x, 0.0)).rgb;
+          vec3 w = texture2D(tDiffuse, vUv - vec2(uTexel.x, 0.0)).rgb;
+          vec3 mn = min(c, min(min(n, s), min(e, w))), mx = max(c, max(max(n, s), max(e, w)));
+          // Less sharpening where local contrast is already high (edges), more on soft texture.
+          vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, 1e-4), 0.0, 1.0));
+          vec3 wgt = -amp * mix(0.125, 0.2, uAmount);
+          vec3 o = (c + (n + s + e + w) * wgt) / (1.0 + 4.0 * wgt);
+          gl_FragColor = vec4(clamp(o, 0.0, 1.0), 1.0);
+        }`,
+    });
+    this.composer.addPass(this.sharpen);
   }
 
   /** Keep depth linearisation in sync with the camera (FPP uses a much smaller near plane). */
@@ -171,7 +220,7 @@ export class Post {
     this.ink.uniforms.uRes.value.set(W, H);
     this.ink.uniforms.uWidth.value = Math.max(1.0, H / 1080) * 1.35;
     this.grade.uniforms.uRes.value.set(W, H);
-    this.fxaa.material.uniforms["resolution"].value.set(1 / W, 1 / H);
+    this.sharpen.uniforms.uTexel.value.set(1 / W, 1 / H);
   }
 
   render(scene: THREE.Scene, camera: THREE.Camera, time: number): void {

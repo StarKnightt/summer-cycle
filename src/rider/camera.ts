@@ -4,7 +4,7 @@ import type { Rider } from "./rider";
 import { damp } from "../core/rng";
 import { roadX } from "../world/road";
 
-export type CamMode = "chase" | "closeup" | "side" | "paddy" | "houses" | "face" | "faceside" | "back";
+export type CamMode = "chase" | "closeup" | "side" | "paddy" | "houses" | "face" | "faceside" | "back" | "custom";
 
 const TPP_FOV = 45;
 const FPP_FOV = 70;
@@ -19,6 +19,9 @@ export class ChaseCam {
   readonly cam: THREE.PerspectiveCamera;
   mode: CamMode = "chase";
   fpp = 0;
+  /** "custom" mode eye / target, as offsets from the rider's ground position. */
+  readonly customPos = new THREE.Vector3();
+  readonly customLook = new THREE.Vector3();
   private blend = 0;
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
@@ -88,6 +91,10 @@ export class ChaseCam {
         tl = new THREE.Vector3(roadX(z - 26) - 30, -0.4, z - 26);
         break;
       }
+      case "custom": // capture tooling: an exact eye + target, relative to the rider
+        tp = this.customPos.clone().add(new THREE.Vector3(c.x, 0, c.z));
+        tl = this.customLook.clone().add(new THREE.Vector3(c.x, 0, c.z));
+        break;
       case "houses": {
         const z = c.z;
         tp = new THREE.Vector3(roadX(z) - 1.0, 1.6, z);
