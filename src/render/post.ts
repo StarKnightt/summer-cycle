@@ -94,6 +94,8 @@ export class Post {
         void main(){
           vec2 px = uWidth / uRes;
           vec3 col = texture2D(tColor, vUv).rgb;
+          // Eye features (irises, catch-lights, lashes, brows, glasses) stay crisp: no paint filter.
+          bool crisp = abs(texture2D(tNormal, vUv).z * 32.0 - 19.0) < 0.5;
           float dC = linz(texture2D(tDepth, vUv).r);
           float iC = 1.0 / dC;
           vec4 nC = texture2D(tNormal, vUv);
@@ -118,7 +120,7 @@ export class Post {
           e = max(e, min(eI, 1.0));
           // Paint filter: a light gouache flattening on calm mid/far surfaces only. It stays off
           // near the camera, on ink edges and on fine detail (it boils frame to frame there).
-          if (uKuwa > 0.5) {
+          if (uKuwa > 0.5 && !crisp) {
             float wK = 0.5 * smoothstep(6.0, 40.0, dC) * (1.0 - clamp(max(e, min(eI, 1.0)) * 1.5, 0.0, 1.0));
             if (wK > 0.02) {
               vec4 k = kuwahara(vUv);
