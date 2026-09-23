@@ -29,8 +29,9 @@ export const PARK_STEER = 0.32;
 const FRAME = "#c7353a";
 const CHROME = "#a3a8ae";
 const TYRE = "#26221f";
-const SKIN = "#f5d3b8";
-const HAIR = "#2b1e1b";
+const SKIN = "#fae3d3";
+const HAIR = "#241a1f";
+const SHORTS = "#1b2034";
 const BLOUSE = "#f4f2ec";
 const NAVY = "#27335c";
 const SOCK = "#f2f0ea";
@@ -124,7 +125,7 @@ const smooth = (e0: number, e1: number, x: number) => {
 // ---------------------------------------------------------------- head shape (head-local units)
 
 const HEAD_R = 0.125;
-const HEAD_SCALE = 1.28;
+const HEAD_SCALE = 1.18;
 /** Unit direction from head centre: az 0 = front (-Z), +az toward +X; el up. */
 const dirOf = (az: number, el: number) => V(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
 const CHIN = V(0, -0.72, -0.69).normalize();
@@ -139,12 +140,13 @@ const JAW_R = V(-0.72, -0.62, -0.32).normalize();
 function faceR(d: THREE.Vector3): number {
   const cz = d.z < 0 ? 0.88 : 1.0;
   const cy = d.y < 0 ? 0.92 : 1.01;
-  let r = HEAD_R / Math.sqrt((d.x / 0.95) ** 2 + (d.y / cy) ** 2 + (d.z / cz) ** 2);
+  let r = HEAD_R / Math.sqrt((d.x / 0.93) ** 2 + (d.y / cy) ** 2 + (d.z / cz) ** 2);
+  // Oval: the lower face tapers to a soft, slightly pointed chin.
   const lower = smooth(-0.05, -0.8, d.y);
-  r *= 1 - 0.155 * lower * Math.abs(d.x);
+  r *= 1 - 0.2 * lower * Math.abs(d.x);
   r *= 1 - 0.16 * smooth(-0.2, -0.9, d.y) * Math.max(0, d.z);
-  r *= 1 + 0.09 * Math.exp(-(1 - d.dot(CHIN)) / 0.035);
-  r *= 1 + 0.05 * (Math.exp(-(1 - d.dot(CHEEK_L)) / 0.05) + Math.exp(-(1 - d.dot(CHEEK_R)) / 0.05));
+  r *= 1 + 0.085 * Math.exp(-(1 - d.dot(CHIN)) / 0.03);
+  r *= 1 + 0.035 * (Math.exp(-(1 - d.dot(CHEEK_L)) / 0.05) + Math.exp(-(1 - d.dot(CHEEK_R)) / 0.05));
   // Soft temples above the cheekbones and a gentle jaw line under them: the face isn't a flat disc.
   r *= 1 - 0.03 * (Math.exp(-(1 - d.dot(TEMPLE_L)) / 0.03) + Math.exp(-(1 - d.dot(TEMPLE_R)) / 0.03));
   r *= 1 - 0.035 * (Math.exp(-(1 - d.dot(JAW_L)) / 0.04) + Math.exp(-(1 - d.dot(JAW_R)) / 0.04));
@@ -182,6 +184,31 @@ function hairline(az: number): number {
   }
   return HAIRLINE[HAIRLINE.length - 1][1];
 }
+/**
+ * Wrap a decal onto the face surface at azimuth az (0 = front, +x = her left) / elevation el, so
+ * wide pieces never sink into the skin; local +z = outward, `lift` above skin. Returns head space.
+ */
+function placeOnHead(g: THREE.BufferGeometry, az: number, el: number, lift: number): THREE.BufferGeometry {
+  const d = dirOf(az, el);
+  const n = radialNormal(d, faceR);
+  const p = d.clone().multiplyScalar(faceR(d));
+  const m = new THREE.Matrix4().lookAt(p.clone().add(n), p, V(0, 1, 0));
+  m.setPosition(p);
+  g.applyMatrix4(m);
+  const pa = g.attributes.position;
+  const v = new THREE.Vector3(), q = new THREE.Vector3();
+  for (let i = 0; i < pa.count; i++) {
+    v.fromBufferAttribute(pa, i);
+    const z = v.clone().sub(p).dot(n);
+    q.copy(v).addScaledVector(n, -z).normalize();
+    const ns = radialNormal(q, faceR);
+    v.copy(q).multiplyScalar(faceR(q)).addScaledVector(ns, lift + z);
+    pa.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
 /** Hair volume above the skin: fuller on the crown and the back. */
 const shellOff = (d: THREE.Vector3) => 0.011 + 0.012 * Math.max(0, d.y) + 0.008 * Math.max(0, d.z);
 
@@ -409,6 +436,22 @@ function blobShadow(w: number, d: number): THREE.Mesh {
   return shadow;
 }
 
+/** Cheek blush: a soft pink oval fading out to the edge (no outline, no hard disc). */
+let blushMat: THREE.ShaderMaterial | null = null;
+function blushMaterial(): THREE.ShaderMaterial {
+  blushMat ??= new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    transparent: true,
+    depthWrite: false,
+    uniforms: {},
+    vertexShader: `out vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `in vec2 vUv; layout(location=0) out vec4 gColor; layout(location=1) out vec4 gNormal;
+      void main(){ float r = length((vUv - 0.5) * 2.0); float a = (1.0 - smoothstep(0.15, 1.0, r)) * 0.62;
+        gColor = vec4(0.95, 0.44, 0.47, a); gNormal = vec4(0.0); }`,
+  });
+  return blushMat;
+}
+
 /** Glasses lens: faint cool tint, a soft rim and a painted white glint (no refraction, no outline). */
 let lensMat: THREE.ShaderMaterial | null = null;
 function lensMaterial(): THREE.ShaderMaterial {
@@ -451,6 +494,12 @@ export class Rider {
   private gripHands: THREE.Mesh[] = [];
   private walkHands: THREE.Group[] = [];
   private lenses: THREE.Mesh[] = [];
+  private eyes: THREE.Group[] = [];
+  private blinkT = 2.5;
+  private blinkK = -1;
+  private skirtCap!: THREE.Mesh;
+  private pelvis!: THREE.Mesh;
+  private shortLegs: Limb[] = [];
   private walkShadow!: THREE.Mesh;
   private onFoot = false;
   private poseA = newPose();
@@ -702,25 +751,10 @@ export class Rider {
    * Decal on the face surface at azimuth az (0 = front, +x = her left) / elevation el, wrapped onto
    * the curvature so wide pieces never sink into the skin; local +z = outward, `lift` above skin.
    */
-  private onHead(g: THREE.BufferGeometry, az: number, el: number, lift: number, id: number, parent: THREE.Object3D = this.head): THREE.Mesh {
-    const d = dirOf(az, el);
-    const n = radialNormal(d, faceR);
-    const p = d.clone().multiplyScalar(faceR(d));
-    const m = new THREE.Matrix4().lookAt(p.clone().add(n), p, V(0, 1, 0));
-    m.setPosition(p);
-    g.applyMatrix4(m);
-    const pa = g.attributes.position;
-    const v = new THREE.Vector3(), q = new THREE.Vector3();
-    for (let i = 0; i < pa.count; i++) {
-      v.fromBufferAttribute(pa, i);
-      const z = v.clone().sub(p).dot(n);
-      q.copy(v).addScaledVector(n, -z).normalize();
-      const ns = radialNormal(q, faceR);
-      v.copy(q).multiplyScalar(faceR(q)).addScaledVector(ns, lift + z);
-      pa.setXYZ(i, v.x, v.y, v.z);
-    }
-    g.computeVertexNormals();
-    return this.add(g, parent, id);
+  private onHead(g: THREE.BufferGeometry, az: number, el: number, lift: number, id: number, parent: THREE.Object3D = this.head, mask = 1): THREE.Mesh {
+    const m = new THREE.Mesh(placeOnHead(g, az, el, lift), uber(id, mask));
+    parent.add(m);
+    return m;
   }
 
   private disc(rx: number, ry: number, color: string, mat: number = M.plain): THREE.BufferGeometry {
@@ -772,6 +806,15 @@ export class Rider {
     this.skirt = new THREE.Mesh(g, uber(rid, 1, THREE.DoubleSide));
     this.skirt.frustumCulled = false;
     b.add(this.skirt);
+    // Closed waistband: a navy cap over the skirt's waist ring, so no angle sees down inside.
+    const cap = prep(new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2).scale(0.15 * 1.12, 1, 0.15 * 0.9), NAVY, M.cloth);
+    this.skirtCap = new THREE.Mesh(cap, uber(rid, 1, THREE.DoubleSide));
+    b.add(this.skirtCap);
+    // Modest dark safety shorts under the skirt (hips + short legs over the thighs).
+    const pel = sphere(1, SHORTS, M.cloth, 16, 10);
+    pel.scale(0.135, 0.085, 0.11);
+    this.pelvis = this.add(pel, b, rid);
+    for (let i = 0; i < 2; i++) this.shortLegs.push(new Limb(b, [0.078, 0.076, 0.074], SHORTS, M.cloth, rid));
     this.drapeSkirt(0, 0);
     const seat = sphere(0.15, NAVY, M.cloth, 16, 10);
     seat.scale(1.05, 0.55, 1.0);
@@ -782,7 +825,7 @@ export class Rider {
     this.torso.position.copy(hip);
     this.torso.rotation.x = -0.28;
     b.add(this.torso);
-    const chest = prep(new THREE.CylinderGeometry(0.135, 0.11, 0.44, 14, 4), BLOUSE, M.cloth);
+    const chest = prep(new THREE.CylinderGeometry(0.135, 0.11, 0.44, 28, 4), BLOUSE, M.cloth);
     const cp = chest.attributes.position;
     for (let i = 0; i < cp.count; i++) {
       const y = cp.getY(i);
@@ -796,6 +839,19 @@ export class Rider {
     yoke.scale(1.08, 0.42, 0.72);
     yoke.translate(0, 0.46, 0);
     this.add(yoke, this.torso, rid);
+    // Blouse hem flaring out over the skirt waistband (overlaps it at every torso angle).
+    {
+      const segs = 28;
+      const hem = new THREE.CylinderGeometry(1, 1, 1, segs, 1, true);
+      const hp = hem.attributes.position;
+      for (let i = 0; i < hp.count; i++) {
+        const top = hp.getY(i) > 0;
+        const a = Math.atan2(hp.getX(i), hp.getZ(i));
+        const rx = top ? 0.12 : 0.19, rz = top ? 0.085 : 0.156;
+        hp.setXYZ(i, Math.sin(a) * rx, top ? 0.09 : -0.045, Math.cos(a) * rz);
+      }
+      this.add(prep(weld(hem), BLOUSE, M.cloth), this.torso, rid).material = uber(rid, 1, THREE.DoubleSide);
+    }
     for (const s of [-1, 1]) {
       const sleeve = sphere(0.058, BLOUSE, M.cloth, 12, 8);
       sleeve.scale(1, 1.1, 1);
@@ -808,15 +864,14 @@ export class Rider {
       cuff.translate(s * 0.165, 0.366, -0.005);
       this.add(cuff, this.torso, rid);
     }
-    this.add(xf(box(0.25, 0.05, 0.17, NAVY, M.cloth), 0, 0.03, 0), this.torso, rid);
     // Square sailor collar lying on the back with two white stripes (reads from the chase cam).
     const WHITE = "#f4f2ec", RED = "#c8363a";
     const tp = this.torso;
-    this.add(torsoPatch(-0.116, 0.116, 0.27, 0.48, 1, 0.006, NAVY, 10, 6), tp, rid);
+    this.add(torsoPatch(-0.116, 0.116, 0.27, 0.48, 1, 0.0035, NAVY, 14, 8), tp, rid);
     // One white stripe inset along the collar's three edges (a single connected U, corners overlap).
     const sy = 0.29, sx = 0.098, sw = 0.012;
-    this.add(torsoPatch(-sx, sx, sy, sy + sw, 1, 0.009, WHITE, 10, 1), tp, rid);
-    for (const s of [-1, 1]) this.add(torsoPatch(Math.min(s * sx, s * (sx - sw)), Math.max(s * sx, s * (sx - sw)), sy, 0.478, 1, 0.009, WHITE, 1, 6), tp, rid);
+    this.add(torsoPatch(-sx, sx, sy, sy + sw, 1, 0.0055, WHITE, 14, 1), tp, rid);
+    for (const s of [-1, 1]) this.add(torsoPatch(Math.min(s * sx, s * (sx - sw)), Math.max(s * sx, s * (sx - sw)), sy, 0.478, 1, 0.0055, WHITE, 1, 8), tp, rid);
     // Collar bands over the shoulder tops, joining the back panel to the front lapels.
     for (const s of [-1, 1]) {
       const pts: THREE.Vector3[] = [], ups: THREE.Vector3[] = [], w: number[] = [], th: number[] = [];
@@ -846,8 +901,8 @@ export class Rider {
     this.add(xf(knot, knotP.x, knotP.y, knotP.z, -0.12), tp, ID.flower);
 
     // Neck + head (head scaled up so the face reads from the chase cam).
-    this.add(xf(cyl(0.043, 0.05, 0.2, SKIN, M.skin, 10), 0, 0.55, 0), tp, ID.skin);
-    this.head.position.set(0, 0.705, -0.012);
+    this.add(xf(cyl(0.036, 0.045, 0.2, SKIN, M.skin, 14), 0, 0.55, 0), tp, ID.skin);
+    this.head.position.set(0, 0.675, -0.012);
     this.head.scale.setScalar(HEAD_SCALE);
     tp.add(this.head);
     const face = new THREE.SphereGeometry(1, 36, 24);
@@ -864,87 +919,142 @@ export class Rider {
     this.buildLimbs();
   }
 
-  /** Ghibli-simple face: big dark eyes with a lash line, small nose wedge, short smile, soft blush. */
+  /**
+   * Ghibli-heroine face: large eyes (dark iris with a warm lower glow, big catch-light + a small
+   * second one, a defined upper lash with an outer flick, a thin lower lash, soft lid crease),
+   * thin arched brows above the frames, tiny soft nose, small smile with a hint of lower lip and
+   * gradient blush. Each eye sits in its own group so it can blink.
+   */
   private buildFace(): void {
-    const EYE_AZ = 0.34, EYE_EL = -0.05;
+    const EYE_AZ = 0.4, EYE_EL = -0.09;
+    const faint = 0.55;
     for (const s of [-1, 1]) {
       const az = s * EYE_AZ;
-      this.onHead(this.disc(0.022, 0.024, "#fbf8f2"), az, EYE_EL - 0.01, 0.001, ID.skin);
-      this.onHead(this.disc(0.0165, 0.0235, "#4a2a1c"), az - s * 0.012, EYE_EL - 0.015, 0.003, ID.eye);
-      this.onHead(this.disc(0.0085, 0.0125, "#140a07"), az - s * 0.012, EYE_EL - 0.01, 0.004, ID.eye);
-      this.onHead(this.disc(0.0055, 0.0065, "#ffffff"), az - 0.035, EYE_EL + 0.04, 0.006, ID.eye);
-      // Arched upper lid line with a small outer tick.
-      const lash = prep(new THREE.TorusGeometry(0.028, 0.0034, 3, 10, 1.6), "#1a100c", M.plain);
-      lash.rotateZ(Math.PI / 2 - 0.8);
-      lash.translate(0, -0.028, 0);
-      lash.scale(1.15, 1, 0.6);
-      this.onHead(lash, az, EYE_EL + 0.195, 0.004, ID.eye);
-      const flick = box(0.012, 0.006, 0.003, "#1a100c");
-      flick.rotateZ(s * 0.5);
-      this.onHead(flick, az + s * 0.215, EYE_EL + 0.12, 0.004, ID.eye);
-      const lower = box(0.012, 0.003, 0.003, "#6a3a2a");
-      lower.rotateZ(s * 0.25);
-      this.onHead(lower, az + s * 0.09, EYE_EL - 0.2, 0.002, ID.skin);
-      // Brows sit high, just under the bang tips, well clear of the glasses rims.
-      const brow = box(0.024, 0.003, 0.0025, "#4a2e20");
-      brow.rotateZ(s * 0.12);
-      this.onHead(brow, az * 1.06, 0.47, 0.004, ID.eye);
-      this.onHead(this.disc(0.018, 0.008, "#f2a6a0", M.skin), s * 0.63, -0.3, 0.001, ID.skin);
+      const eye = new THREE.Group();
+      const d0 = dirOf(az, EYE_EL);
+      const P = d0.clone().multiplyScalar(faceR(d0));
+      eye.position.copy(P);
+      this.head.add(eye);
+      this.eyes.push(eye);
+      const deco = (g: THREE.BufferGeometry, a: number, e: number, lift: number, id: number, mask = faint) => {
+        const m = new THREE.Mesh(placeOnHead(g, a, e, lift).translate(-P.x, -P.y, -P.z), uber(id, mask));
+        eye.add(m);
+        return m;
+      };
+      // Eye white, iris, warm lower glow, pupil, catch-lights (both eyes lit from the same side).
+      deco(this.disc(0.0205, 0.0215, "#fdfbf7"), az, EYE_EL, 0.001, ID.skin, 0);
+      deco(this.disc(0.0152, 0.0198, "#3a1f15"), az - s * 0.01, EYE_EL - 0.008, 0.003, ID.eye);
+      deco(this.disc(0.0112, 0.0082, "#9c6641"), az - s * 0.01, EYE_EL - 0.098, 0.0035, ID.eye);
+      deco(this.disc(0.0074, 0.0108, "#120806"), az - s * 0.01, EYE_EL - 0.012, 0.004, ID.eye);
+      deco(this.disc(0.0062, 0.0072, "#ffffff"), az - s * 0.01 - 0.042, EYE_EL + 0.045, 0.006, ID.eye);
+      deco(this.disc(0.0026, 0.0026, "#ffffff"), az - s * 0.01 + 0.036, EYE_EL - 0.11, 0.006, ID.eye);
+      // Upper lash line: an arc hugging the top of the eye, heavier toward the outer corner.
+      const lash = prep(new THREE.TorusGeometry(0.0265, 0.0031, 3, 14, 1.8), "#1a0f0c", M.plain);
+      lash.rotateZ(Math.PI / 2 - 0.9 - s * 0.08);
+      lash.translate(0, -0.0265, 0);
+      lash.scale(1.12, 1, 0.6);
+      deco(lash, az, EYE_EL + 0.178, 0.0045, ID.eye);
+      const flick = box(0.011, 0.0042, 0.0028, "#1a0f0c");
+      flick.rotateZ(s * 0.55);
+      deco(flick, az + s * 0.235, EYE_EL + 0.1, 0.0045, ID.eye);
+      // Thin lower lash hint at the outer half, and a soft crease above the lid.
+      const low = prep(new THREE.TorusGeometry(0.019, 0.0011, 3, 8, 0.8), "#6e4234", M.plain);
+      low.rotateZ(-Math.PI / 2 + s * 0.35);
+      low.translate(0, 0.019, 0);
+      deco(low, az + s * 0.05, EYE_EL - 0.175, 0.0025, ID.skin, 0);
+      const crease = prep(new THREE.TorusGeometry(0.027, 0.0009, 3, 10, 1.1), "#c79080", M.plain);
+      crease.rotateZ(Math.PI / 2 - 0.55);
+      crease.translate(0, -0.027, 0);
+      deco(crease, az, EYE_EL + 0.255, 0.002, ID.skin, 0);
+      // Thin, softly arched brow above the frame, partly under the bangs.
+      const brow = prep(new THREE.TorusGeometry(0.034, 0.0017, 3, 12, 0.95), "#3a2520", M.plain);
+      brow.rotateZ(Math.PI / 2 - 0.475 - s * 0.12);
+      brow.translate(0, -0.034, 0);
+      this.onHead(brow, az * 1.03, 0.315, 0.004, ID.eye, this.head, faint);
+      // Gradient blush on the cheek.
+      const blush = new THREE.Mesh(placeOnHead(new THREE.CircleGeometry(1, 24).scale(0.021, 0.0115, 1), s * 0.68, -0.37, 0.0016), blushMaterial());
+      blush.renderOrder = 2;
+      this.head.add(blush);
+      this.lenses.push(blush);
     }
-    // Nose: a tiny soft tip (smooth skin shading, reads as a bump in profile) + a faint shadow dash.
+    // Nose: a tiny soft tip + a faint shadow line.
     const nose = sphere(1, SKIN, M.skin, 12, 8);
-    nose.scale(0.0075, 0.0068, 0.0105);
-    this.onHead(nose, 0, -0.29, -0.001, ID.skin);
-    const noseShade = this.disc(0.0055, 0.0022, "#e2a48f", M.skin);
+    nose.scale(0.0068, 0.006, 0.0095);
+    this.onHead(nose, 0, -0.33, -0.001, ID.skin);
+    const noseShade = this.disc(0.0048, 0.0016, "#dca08e", M.skin);
     noseShade.rotateZ(-0.35);
-    this.onHead(noseShade, -0.035, -0.345, 0.0012, ID.skin);
-    // Short soft smile.
-    const mouth = prep(new THREE.TorusGeometry(0.019, 0.0034, 3, 8, 1.1), "#7a3230", M.plain);
-    mouth.rotateZ(-Math.PI / 2 - 0.55);
-    mouth.translate(0, 0.015, 0);
+    this.onHead(noseShade, -0.03, -0.38, 0.0012, ID.skin, this.head, 0);
+    // Small soft smile + a hint of lower lip.
+    const mouth = prep(new THREE.TorusGeometry(0.019, 0.0026, 3, 10, 1.05), "#7e3232", M.plain);
+    mouth.rotateZ(-Math.PI / 2 - 0.5);
+    mouth.translate(0, 0.019, 0);
     mouth.scale(1, 1, 0.5);
-    this.onHead(mouth, 0, -0.45, 0.001, ID.skin);
+    this.onHead(mouth, 0, -0.5, 0.001, ID.skin, this.head, faint);
+    this.onHead(this.disc(0.0062, 0.0021, "#e9a39c", M.skin), 0, -0.535, 0.0008, ID.skin, this.head, 0);
     this.buildGlasses();
   }
 
   /**
-   * Round thin-frame glasses: two rims floating just clear of the face (fitted numerically against
-   * the head surface), a keyhole bridge, hinges and temples that tuck under the hair toward the ears.
+   * Rectangular black acetate frames: rounded-rectangle lenses (wider than tall), a heavier
+   * browline, a clean bridge and temples that run back under the hair. Flat lacquer material (no
+   * brush texture) with one soft highlight line on each top rim; faint lenses with painted glints.
    */
   private buildGlasses(): void {
-    const FR = "#2e1b12";
-    const R = 0.0375, TUBE = 0.0014, CLEAR = 0.009;
+    const FR = "#141216", HI = "#5d5963";
+    const W = 0.066, H = 0.045, RC = 0.012;
+    const SIDE = 0.0048, TOP = 0.0078, BOT = 0.0036, DEPTH = 0.0045, CLEAR = 0.009;
+    const rrect = <T extends THREE.Path>(shape: T, x0: number, y0: number, x1: number, y1: number, r: number): T => {
+      shape.moveTo(x0 + r, y0);
+      shape.lineTo(x1 - r, y0);
+      shape.quadraticCurveTo(x1, y0, x1, y0 + r);
+      shape.lineTo(x1, y1 - r);
+      shape.quadraticCurveTo(x1, y1, x1 - r, y1);
+      shape.lineTo(x0 + r, y1);
+      shape.quadraticCurveTo(x0, y1, x0, y1 - r);
+      shape.lineTo(x0, y0 + r);
+      shape.quadraticCurveTo(x0, y0, x0 + r, y0);
+      return shape;
+    };
     const parts: THREE.BufferGeometry[] = [];
-    const inner: THREE.Vector3[] = [], hinge: THREE.Vector3[] = [], lensN: THREE.Vector3[] = [];
     const clearance = (q: THREE.Vector3) => q.length() - faceR(q.clone().normalize());
+    const bridgeEnds: THREE.Vector3[] = [];
     for (const s of [-1, 1]) {
-      const d = dirOf(s * 0.34, -0.01);
-      const n = dirOf(s * 0.14, 0.03);
+      const d = dirOf(s * 0.4, -0.075);
+      const n = dirOf(s * 0.17, 0.0);
       const ex = V(0, 1, 0).cross(n).normalize(); // ≈ -X
       const ey = n.clone().cross(ex).normalize();
       const C = d.clone().multiplyScalar(faceR(d));
-      for (let it = 0; it < 8; it++) {
-        // The whole lens disc (centre, mid ring, rim) must float clear of the eye and lashes.
-        let minC = clearance(C);
-        for (const rr of [0.5 * R, R + TUBE])
-          for (let k = 0; k < 32; k++) {
-            const a = (k / 32) * Math.PI * 2;
-            const q = C.clone().addScaledVector(ex, Math.cos(a) * rr).addScaledVector(ey, Math.sin(a) * rr);
-            minC = Math.min(minC, clearance(q));
-          }
+      const samples: number[][] = [];
+      for (let i = 0; i <= 6; i++)
+        for (let j = 0; j <= 4; j++) samples.push([(-0.5 + i / 6) * (W + 2 * SIDE), -H / 2 - BOT + (j / 4) * (H + TOP + BOT)]);
+      for (let it = 0; it < 10; it++) {
+        let minC = Infinity;
+        for (const [x, y] of samples) minC = Math.min(minC, clearance(C.clone().addScaledVector(ex, x).addScaledVector(ey, y).addScaledVector(n, -DEPTH / 2)));
         if (minC >= CLEAR - 1e-4) break;
         C.addScaledVector(n, CLEAR - minC);
       }
       const basis = new THREE.Matrix4().makeBasis(ex, ey, n).setPosition(C);
-      parts.push(prep(new THREE.TorusGeometry(R, TUBE, 5, 40), FR, M.plain).applyMatrix4(basis));
-      const lens = new THREE.Mesh(new THREE.CircleGeometry(R, 32).applyMatrix4(basis), lensMaterial());
+      const shape = rrect(new THREE.Shape(), -W / 2 - SIDE, -H / 2 - BOT, W / 2 + SIDE, H / 2 + TOP, RC + SIDE);
+      shape.holes.push(rrect(new THREE.Path(), -W / 2, -H / 2, W / 2, H / 2, RC));
+      const rim = new THREE.ExtrudeGeometry(shape, { depth: DEPTH, bevelEnabled: false, curveSegments: 6 });
+      rim.translate(0, 0, -DEPTH / 2);
+      parts.push(prep(rim, FR, M.lacquer).applyMatrix4(basis));
+      // One soft highlight line along the top rim.
+      const hi = new THREE.ExtrudeGeometry(rrect(new THREE.Shape(), -W / 2 + RC * 0.6, H / 2 + TOP * 0.42, W / 2 - RC * 0.6, H / 2 + TOP * 0.62, 0.0009), { depth: 0.0006, bevelEnabled: false, curveSegments: 2 });
+      hi.translate(0, 0, DEPTH / 2);
+      parts.push(prep(hi, HI, M.lacquer).applyMatrix4(basis));
+      // Lens (uv 0..1 over the lens rectangle for the tint shader).
+      const lensG = new THREE.ShapeGeometry(rrect(new THREE.Shape(), -W / 2, -H / 2, W / 2, H / 2, RC), 6);
+      const lp = lensG.attributes.position, luv = lensG.attributes.uv as THREE.BufferAttribute;
+      for (let i = 0; i < lp.count; i++) luv.setXY(i, lp.getX(i) / W + 0.5, lp.getY(i) / H + 0.5);
+      const lens = new THREE.Mesh(lensG.applyMatrix4(basis), lensMaterial());
       lens.renderOrder = 2;
       this.head.add(lens);
       this.lenses.push(lens);
-      // Painted glint: two slanted strokes, upper-left as seen from the front; unshaded + un-inked
-      // (the "distant" material path) so they stay crisp white over the eye's own lines.
+      // Painted glints: two slanted strokes, upper-left as seen from the front.
       const strokes: THREE.BufferGeometry[] = [];
-      for (const [cx, cy, len, w] of [[-0.3, 0.28, 0.9, 0.25], [0.17, 0.0, 0.5, 0.12]]) {
+      const R = H / 2;
+      for (const [cx, cy, len, w] of [[-0.62, 0.28, 0.95, 0.22], [-0.12, 0.12, 0.55, 0.1]]) {
         const ax = 0.7071 * (len / 2) * R, ay = 0.7071 * (len / 2) * R;
         const px = -0.7071 * (w / 2) * R, py = 0.7071 * (w / 2) * R;
         const c0 = V(cx * R, cy * R, 0.0012);
@@ -964,33 +1074,28 @@ export class Rider {
       const glint = new THREE.Mesh(merge(strokes), uber(ID.eye, -1, THREE.DoubleSide));
       this.head.add(glint);
       this.lenses.push(glint);
-      // ex points toward -X, so the inner (nose-side) edge of rim s is along +s·ex.
-      inner.push(C.clone().addScaledVector(ex, s * R));
-      hinge.push(C.clone().addScaledVector(ex, -s * R));
-      lensN.push(n);
-    }
-    // Bridge: a small arch over the nose.
-    const [iA, iB] = inner;
-    const top = iA.clone().add(iB).multiplyScalar(0.5).add(V(0, 0.012, -0.004));
-    const q = (t: number) => iA.clone().multiplyScalar((1 - t) ** 2).addScaledVector(top, 2 * t * (1 - t)).addScaledVector(iB, t * t);
-    for (let k = 0; k < 6; k++) parts.push(beam(q(k / 6), q((k + 1) / 6), TUBE * 0.9, FR, M.plain, 5));
-    // Hinges + temples running back along the side of the head just above the skin, under the hair.
-    hinge.forEach((h, i) => {
-      const s = i === 0 ? -1 : 1;
-      parts.push(xf(sphere(TUBE * 1.9, FR, M.plain, 6, 4), h.x, h.y, h.z));
-      let prev = h.clone().addScaledVector(lensN[i], -0.003);
-      parts.push(beam(h, prev, TUBE * 1.2, FR, M.plain, 5));
-      for (let k = 0; k <= 6; k++) {
-        const az = s * (0.8 + (k / 6) * 0.85);
-        const dd = dirOf(az, -0.02 - k * 0.012);
+      // ex ≈ -X: the nose-side edge of lens s is at local x = +s·W/2.
+      bridgeEnds.push(V(s * (W / 2 + SIDE * 0.4), H / 2 - 0.001, 0).applyMatrix4(basis));
+      // Hinge at the outer top corner, temple back along the head under the hair.
+      const hinge = V(-s * (W / 2 + SIDE * 0.5), H / 2 + TOP * 0.35, -DEPTH / 2).applyMatrix4(basis);
+      let prev = hinge.clone().addScaledVector(n, -0.006);
+      parts.push(beam(hinge, prev, 0.0028, FR, M.lacquer, 6));
+      for (let k = 0; k <= 7; k++) {
+        const a = s * (0.86 + (k / 7) * 0.82);
+        const dd = dirOf(a, -0.02 - k * 0.012);
         const p = dd.clone().multiplyScalar(faceR(dd) + 0.0045);
-        parts.push(beam(prev, p, TUBE * 0.9, FR, M.plain, 5));
+        parts.push(beam(prev, p, 0.0024, FR, M.lacquer, 6));
         prev = p;
       }
-    });
-    // The dark frame is its own ink line: excluded from the outline pass so it never doubles up.
+    }
+    // Clean, slightly arched bridge over the nose.
+    const [bA, bB] = bridgeEnds;
+    const mid = bA.clone().add(bB).multiplyScalar(0.5).add(V(0, 0.0035, -0.001));
+    parts.push(beam(bA, mid, 0.0026, FR, M.lacquer, 6), beam(mid, bB, 0.0026, FR, M.lacquer, 6));
+    // Black acetate is its own line: excluded from the ink pass so it never doubles up.
     const frames = new THREE.Mesh(merge(parts), uber(ID.eye, -1));
     this.head.add(frames);
+    this.lenses.push(frames);
   }
 
   /**
@@ -1028,12 +1133,32 @@ export class Rider {
     shell.computeVertexNormals();
     this.add(prep(shell, HAIR, M.hair), this.head, ID.hair);
 
-    // Bangs: blunt separated clumps down to the brows.
-    const tips = [0.5, 0.45, 0.41, 0.39, 0.42, 0.46, 0.52];
-    tips.forEach((el1, k) => {
-      const az = (k - 3) * 0.24;
-      this.add(hairClump(az, 1.12, az * 1.08, el1, 0.021, 0.28, 0.009), this.head, ID.hair);
-    });
+    // Layered bangs: tapered strands of varying length with gaps between the tips, over a shorter
+    // back layer that fills the roots (never a solid helmet edge).
+    const front: [number, number, number][] = [
+      [-0.8, 0.44, 0.017], [-0.64, 0.36, 0.02], [-0.47, 0.32, 0.016], [-0.31, 0.37, 0.02], [-0.15, 0.3, 0.017], [0.01, 0.35, 0.019],
+      [0.16, 0.29, 0.016], [0.32, 0.36, 0.02], [0.48, 0.31, 0.017], [0.64, 0.37, 0.019], [0.8, 0.45, 0.017],
+    ];
+    for (const [az, tip, w] of front) this.add(hairClump(az * 0.92, 1.18, az, tip, w, 0.1, 0.0092, 9, 1.3), this.head, ID.hair);
+    for (let k = 0; k < 10; k++) {
+      const az = -0.72 + k * 0.16;
+      this.add(hairClump(az * 0.92, 1.12, az, 0.46 + 0.05 * Math.sin(k * 2.3), 0.024, 0.3, 0.0075, 7, 1.3), this.head, ID.hair);
+    }
+    // Glossy "angel ring" band around the crown (toon highlight, no ink).
+    {
+      const pts: THREE.Vector3[] = [], ups: THREE.Vector3[] = [], w: number[] = [], th: number[] = [];
+      const N = 28;
+      for (let k = 0; k < N; k++) {
+        const t = k / (N - 1);
+        const az = -2.5 + 5 * t;
+        const d = dirOf(az, 1.2 + 0.05 * Math.cos(az * 2));
+        pts.push(d.clone().multiplyScalar(faceR(d) + shellOff(d) + 0.0012));
+        ups.push(d);
+        w.push(0.0075 * Math.pow(Math.sin(Math.PI * t), 0.6) + 0.0005);
+        th.push(0.0006);
+      }
+      this.head.add(new THREE.Mesh(ribbon(pts, ups, w, th, "#4c414f", M.hair, 1), uber(ID.hair, -1)));
+    }
     for (const s of [-1, 1]) {
       // Face-framing side bangs, cheek locks over the face edge, and a fuller clump behind the ear.
       this.add(hairClump(s * 1.0, 1.0, s * 1.12, 0.22, 0.018, 0.22, 0.009), this.head, ID.hair);
@@ -1158,7 +1283,7 @@ export class Rider {
         const rWaist = 0.15;
         const flare = 0.13 * pleat * (1 - 0.25 * stand);
         const rad = rWaist * (1 - t) + (rWaist + flare) * t;
-        const len = 0.31 * (f > 0.6 ? 0.9 : 1.0) * (1 - stand) + 0.335 * stand;
+        const len = 0.335 * (f > 0.6 ? 0.9 : 1.0) * (1 - stand) + 0.4 * stand;
         const flut = Math.sin(time * 9 + a * 3 + j) * 0.012 * sp * t * t;
         const drift = 0.05 * sp * t * t * (1 - f) * (1 - stand) + (0.035 * mv + 0.05 * run) * t * t * stand;
         const swing = Math.sin(ph) * 0.014 * mv * t * t * stand;
@@ -1217,14 +1342,14 @@ export class Rider {
         else c.layers.enable(0);
       });
     set(this.torso);
-    for (const l of [...this.upperArm, ...this.thigh, ...this.shin]) set(l.mesh);
+    for (const l of [...this.upperArm, ...this.thigh, ...this.shin, ...this.shortLegs]) set(l.mesh);
     for (const m of [...this.elbows, ...this.knees, ...this.feet]) set(m);
   }
   private fppOn = false;
 
   /** Hide the skirt from the main view only (keeps its shadow) while the camera swoops in. */
   setSkirtHidden(on: boolean): void {
-    for (const m of [this.skirt, this.seatCover]) {
+    for (const m of [this.skirt, this.seatCover, this.skirtCap, this.pelvis]) {
       if (on) m.layers.disable(0);
       else m.layers.enable(0);
     }
@@ -1315,7 +1440,23 @@ export class Rider {
     this.seatCover.visible = fb === 0;
     for (const l of this.lenses) l.layers.mask = this.fppOn ? 0 : 1;
     this.drapeSkirt(f && fb > 0 ? f.speed : s.speed, s.time, stand, gait);
-    void dt;
+    this.skirtCap.position.copy(this.waistNow);
+    // Shorts: hips just under the waistband, legs over the top of each thigh.
+    this.pelvis.position.copy(P.torsoP).add(_v1.set(0, -0.07, 0.005));
+    for (let i = 0; i < 2; i++) this.shortLegs[i].set(this.thighA[i].clone().add(_v1.set(0, 0.02, 0)), _v2.copy(this.thighA[i]).lerp(this.thighB[i], 0.3));
+    // Natural blink every few seconds.
+    this.blinkT -= dt;
+    if (this.blinkT <= 0 && this.blinkK < 0) {
+      this.blinkK = 0;
+      this.blinkT = 2.4 + Math.random() * 3.2;
+    }
+    let lid = 0;
+    if (this.blinkK >= 0) {
+      this.blinkK += dt / 0.15;
+      lid = Math.sin(Math.PI * Math.min(1, this.blinkK));
+      if (this.blinkK >= 1) this.blinkK = -1;
+    }
+    for (const e of this.eyes) e.scale.y = 1 - 0.9 * lid;
   }
 
   /** 0 seated … 1 standing (how far the dismount has got). */

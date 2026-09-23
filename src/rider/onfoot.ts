@@ -34,6 +34,9 @@ const STAND_Z = 0.12;
 /** Explorable band: the far terrace bank on the paddy side, the foot of the wooded hills on the other. */
 const U_MAX = 42;
 const PIVOT_DROP = 0.1;
+/** Orbit pitch limits: never steeper than ~55° looking down or below ~-10° looking up. */
+const PITCH_MIN = -0.17;
+const PITCH_MAX = 0.96;
 
 const { ROW_P, COL_P, NROWS, BERM0, HOUSES, FENCES_LEFT, GUARDRAIL_RIGHT, paddyLevel } = LAYOUT;
 const U_FAR = BERM0 - NROWS * ROW_P;
@@ -314,7 +317,7 @@ export class Explore {
     const dx = cam.x - this.pivot.x, dy = cam.y - this.pivot.y, dz = cam.z - this.pivot.z;
     const d = Math.max(0.5, Math.hypot(dx, dy, dz));
     this.oYaw = Math.atan2(dx, dz);
-    this.oPitch = clamp(Math.asin(clamp(dy / d, -1, 1)), -0.12, 1.2);
+    this.oPitch = clamp(Math.asin(clamp(dy / d, -1, 1)), PITCH_MIN, PITCH_MAX);
     this.oDist = clamp(d, 1.4, 7);
     this.dCur = this.oDist;
     this.touched = 0;
@@ -590,14 +593,14 @@ export class Explore {
 
   private orbitBy(mx: number, my: number): void {
     this.oYaw = wrapA(this.oYaw - mx * 0.0055);
-    this.oPitch = clamp(this.oPitch + my * 0.004, -0.12, 1.2);
+    this.oPitch = clamp(this.oPitch + my * 0.004, PITCH_MIN, PITCH_MAX);
     this.touched = 3;
   }
 
   /** Test / script hook: camera bearing relative to her facing (0 = behind, π = in front), pitch, distance. */
   setOrbit(rel: number, pitch: number, dist: number): void {
     this.oYaw = wrapA(this.yaw + rel);
-    this.oPitch = clamp(pitch, -0.12, 1.2);
+    this.oPitch = clamp(pitch, PITCH_MIN, PITCH_MAX);
     this.oDist = clamp(dist, 1.4, 7);
     this.dCur = this.oDist;
     this.touched = 1e9;
@@ -647,7 +650,7 @@ export class Explore {
         }
       }
       if (hit) {
-        lim = Math.max(0.7, d - 0.35);
+        lim = Math.max(1.0, d - 0.35);
         break;
       }
     }

@@ -9,6 +9,8 @@ export const M = {
   leafCard: 17, mote: 18, distant: 19, flower: 20,
   /** Leaf card on a canopy's outer rim: drawn like leafCard, but casts no sun shadow. */
   fringeCard: 21,
+  /** Glasses acetate: flat clean toon, no brush texture, no rim light. */
+  lacquer: 22,
 } as const;
 
 /** Outline groups: lines are drawn where neighbouring pixels belong to different groups. */

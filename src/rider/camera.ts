@@ -191,6 +191,13 @@ export class ChaseCam {
         tp = new THREE.Vector3(head.x - fx * 1.3 + rx * 0.2, head.y + 0.1, head.z - fz * 1.3 + rz * 0.2);
         tl = head.clone().setY(head.y - 0.25);
         break;
+      case "overhead": {
+        // Steepest allowed look-down (55°), behind her: an outfit / modesty check view.
+        const r = 2.4, pitch = 0.96;
+        tp = new THREE.Vector3(c.x - fx * r * Math.cos(pitch), 1.25 + r * Math.sin(pitch), c.z - fz * r * Math.cos(pitch));
+        tl = new THREE.Vector3(c.x, 1.25, c.z);
+        break;
+      }
       case "closeup":
         tp = new THREE.Vector3(c.x + rx * 2.1 + fx * 1.5, 1.2, c.z + rz * 2.1 + fz * 1.5);
         tl = new THREE.Vector3(c.x + fx * 0.05, 0.95, c.z + fz * 0.05);

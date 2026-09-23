@@ -471,7 +471,9 @@ void main(){
     paint = 0.8; rim = 0.7; soft = 0.06;
     mask = -1.0;
   } else if (mt == 7) {     // skin: broad soft wrap so faces never carry a hard crease
-    paint = 0.15; soft = 0.16; rim = 0.8;
+    paint = 0.0; soft = 0.14; rim = 0.6;
+  } else if (mt == 22) {    // glasses acetate: flat, clean, no brush strokes
+    paint = 0.0; soft = 0.02; rim = 0.0;
   } else if (mt == 8) {     // cloth
     paint = 0.6; rim = 0.7;
   } else if (mt == 9) {     // bark / weathered wood
@@ -526,7 +528,8 @@ void main(){
   }
 
   // Skin shades warm (peach/rose) instead of the cool environment shadow.
-  vec3 shT = mt == 7 ? vec3(0.84, 0.6, 0.56) : uShadowTint;
+  // Skin shades to a soft pink-lavender instead of the cool environment shadow.
+  vec3 shT = mt == 7 ? vec3(0.86, 0.68, 0.74) : uShadowTint;
   if (mt == 7) jit += 0.34;
   vec3 col = toonT(base, N, vWPos, jit, paint, rim, soft, shT) + emis;
   if (mt == 1) {

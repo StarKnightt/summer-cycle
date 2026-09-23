@@ -84,11 +84,59 @@ try {
     await R(() => window.__ride.explore.walk(0, 0));
   }
 
+  if (ONLY.includes("outfit")) {
+    // Modesty check: 8 steep (max 55°) top-down angles + 4 low angles on foot, then riding views,
+    // composed into contact sheets.
+    const grab = async (cw = 520, ch = 620, dy = 0.3) => {
+      const h = await R(() => window.__ride.headScreen());
+      const x = Math.max(0, Math.min(W - cw, h.x - cw / 2)), y = Math.max(0, Math.min(H - ch, h.y - ch * dy));
+      return (await page.screenshot({ clip: { x, y, width: cw, height: ch } })).toString("base64");
+    };
+    const sheet = async (name, imgs, cols) => {
+      const p2 = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+      await p2.setContent(`<body style="margin:0;background:#222;display:grid;grid-template-columns:repeat(${cols},1fr);gap:4px">${imgs.map((b) => `<img style="width:100%" src="data:image/png;base64,${b}">`).join("")}</body>`);
+      await p2.waitForTimeout(300);
+      await p2.screenshot({ path: path.join(OUT, `${name}.png`), fullPage: true });
+      await p2.close();
+      console.log(`sheet ${name}`);
+    };
+    await page.keyboard.press("KeyF");
+    await page.waitForFunction(() => window.__ride.explore.state.mode === "walk", null, { timeout: 8000 });
+    await R(() => window.__ride.explore.lookAround(false));
+    const top = [], low = [];
+    for (let k = 0; k < 8; k++) {
+      await R(([a]) => window.__ride.explore.orbit(a, 2, 1.8), [(k / 8) * Math.PI * 2]);
+      await wait(450);
+      top.push(await grab(520, 620, 0.15));
+    }
+    for (let k = 0; k < 4; k++) {
+      await R(([a]) => window.__ride.explore.orbit(a, -1, 1.6), [(k / 4) * Math.PI * 2 + 0.4]);
+      await wait(450);
+      low.push(await grab(520, 700, 0.12));
+    }
+    await sheet("outfit_onfoot_top8", top, 4);
+    await sheet("outfit_onfoot_low4", low, 4);
+    await page.keyboard.press("KeyF");
+    await page.waitForFunction(() => window.__ride.explore.state.mode === "ride", null, { timeout: 8000 });
+    await wait(2500);
+    const ride = [];
+    for (const m of ["overhead", "chase", "flank", "front"]) {
+      await R(([mm]) => window.__ride.setCam(mm), [m]);
+      await wait(700);
+      ride.push(await grab(700, 620, 0.2));
+    }
+    await R(() => window.__ride.setCam("fpp"));
+    await wait(900);
+    ride.push((await page.screenshot({ clip: { x: 260, y: 0, width: 1400, height: 1080 } })).toString("base64"));
+    await R(() => window.__ride.setCam("tpp"));
+    await sheet("outfit_riding", ride, 3);
+  }
+
   if (ONLY.includes("face")) {
     await page.keyboard.press("KeyF");
     await page.waitForFunction(() => window.__ride.explore.state.mode === "walk", null, { timeout: 8000 });
     await R(() => window.__ride.explore.lookAround(false));
-    for (const [n, rel, d] of [["face_front", Math.PI, 1.5], ["face_34", Math.PI - 0.65, 1.5], ["face_profile", Math.PI / 2 + 0.05, 1.5]]) {
+    for (const [n, rel, d] of [["face_front", Math.PI, 1.5], ["face_34", Math.PI - 0.65, 1.5], ["face_profile", Math.PI / 2 + 0.05, 1.5], ["face_back", 0.35, 1.6]]) {
       await R(([a, b]) => window.__ride.explore.orbit(a, 0.02, b), [rel, d]);
       await wait(700);
       await shot(`dbg_${n}`, "face");
