@@ -11,7 +11,7 @@ const FS_VS = /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position =
 
 /**
  * Scene → MRT (colour, normal/id/mask, depth) → [paint filter + ink outlines] → bloom →
- * [warm grade, vignette, paper grain, sRGB] → FXAA.
+ * [warm grade, vignette, paper grain, sRGB] → SMAA (only when MSAA is off) → CAS sharpen.
  */
 export class Post {
   readonly mrt: THREE.WebGLRenderTarget;
