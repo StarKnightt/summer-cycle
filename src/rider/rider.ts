@@ -12,7 +12,7 @@ export { BIKE, PARK_LEAN, PARK_STEER } from "./bike";
  * forward = -Z, up = +Y, right = +X. Hierarchy: root (world pos, yaw) → lean (roll) → bike, body.
  */
 
-const SKIN = "#f2cdb0";
+const SKIN = "#f6d9c5";
 const HAIR = "#3b2c26";
 const SHORTS = "#1d2233";
 const BLOUSE = "#f6f4ef";
@@ -96,23 +96,24 @@ const dirOf = (az: number, el: number) => V(Math.sin(az) * Math.cos(el), Math.si
  * where only the chin is left in front of the neck). Above y = 0.03 the cranium closes as a round
  * cap. The front half is a flatter superellipse so the face reads as a soft oval plate.
  */
-const CAP_Y = 0.03, TOP_Y = 0.132, CHIN_Y = -0.105;
+const CAP_Y = 0.03, TOP_Y = 0.132, CHIN_Y = -0.106;
 const PROF: [number, number, number, number][] = [
   // y       W       F       B
   [0.03, 0.088, 0.099, 0.112],
   [0.01, 0.087, 0.1, 0.11],
   [-0.012, 0.085, 0.099, 0.103],
-  [-0.028, 0.081, 0.099, 0.093],
-  [-0.042, 0.0752, 0.098, 0.079],
-  // Jaw angle just below the ear, then a straight jaw line running forward to a small rounded chin.
-  [-0.053, 0.0675, 0.096, 0.061],
-  [-0.062, 0.06, 0.0945, 0.036],
-  [-0.071, 0.0515, 0.0935, 0.013],
-  [-0.08, 0.042, 0.093, -0.01],
-  [-0.088, 0.033, 0.092, -0.031],
-  [-0.095, 0.0245, 0.09, -0.049],
-  [-0.1, 0.016, 0.086, -0.062],
-  [CHIN_Y, 0.0, 0.079, -0.07],
+  [-0.028, 0.0825, 0.099, 0.093],
+  // Full soft cheeks rounding into a gentle jaw and a small, round (never pointed) chin.
+  [-0.042, 0.0795, 0.098, 0.079],
+  [-0.053, 0.075, 0.096, 0.061],
+  [-0.062, 0.0695, 0.0945, 0.036],
+  [-0.071, 0.0625, 0.0935, 0.013],
+  [-0.08, 0.054, 0.093, -0.01],
+  [-0.088, 0.045, 0.092, -0.031],
+  [-0.095, 0.0355, 0.0905, -0.049],
+  [-0.1, 0.026, 0.0875, -0.061],
+  [-0.1035, 0.016, 0.084, -0.068],
+  [CHIN_Y, 0.0, 0.079, -0.072],
 ];
 /** Dense lookup of the Catmull-Rom interpolated profile (W, F, B) from CAP_Y down to CHIN_Y. */
 const PROF_N = 1024;
@@ -165,7 +166,7 @@ function faceBumps(d: THREE.Vector3): number {
   const az = Math.atan2(d.x, -d.z), el = Math.asin(Math.max(-1, Math.min(1, d.y)));
   if (Math.abs(az) > 1.2) return 0;
   const de = el - NOSE_EL;
-  let b = 0.0092 * Math.exp(-((az / (0.062 + 0.05 * Math.max(0, -de))) ** 2) - (de / (de > 0 ? 0.13 : 0.04)) ** 2);
+  let b = 0.0072 * Math.exp(-((az / (0.062 + 0.05 * Math.max(0, -de))) ** 2) - (de / (de > 0 ? 0.13 : 0.04)) ** 2);
   b += 0.0026 * Math.exp(-((az / 0.055) ** 2)) * smooth(-0.02, 0.08, de) * smooth(0.4, 0.22, de);
   b -= 0.0022 * Math.exp(-((az / 0.25) ** 2) - ((el - LIP_EL - 0.075) / 0.05) ** 2);
   b += 0.0014 * Math.exp(-((az / 0.16) ** 2) - ((el - LIP_EL - 0.028) / 0.026) ** 2);
@@ -435,14 +436,14 @@ const TORSO: [number, number, number, number][] = [
   [0.26, 0.137, 0.093, 0.086],
   [0.32, 0.143, 0.095, 0.089],
   [0.37, 0.149, 0.092, 0.089],
-  [0.41, 0.156, 0.085, 0.084],
-  [0.44, 0.157, 0.075, 0.076],
-  [0.465, 0.136, 0.064, 0.067],
-  [0.482, 0.092, 0.05, 0.055],
-  [0.494, 0.056, 0.042, 0.047],
-  [0.5, 0.03, 0.036, 0.04],
+  [0.415, 0.157, 0.085, 0.084],
+  [0.448, 0.157, 0.075, 0.076],
+  [0.472, 0.13, 0.062, 0.065],
+  [0.481, 0.086, 0.05, 0.055],
+  [0.488, 0.056, 0.042, 0.047],
+  [0.492, 0.032, 0.036, 0.04],
 ];
-const TORSO_TOP = 0.5, TORSO_BOT = -0.03;
+const TORSO_TOP = 0.492, TORSO_BOT = -0.03;
 const _sec: [number, number, number] = [0, 0, 0];
 function torsoSec(y: number): [number, number, number] {
   const T = TORSO, n = T.length;
@@ -465,7 +466,7 @@ function bust(x: number, y: number): number {
 }
 const TORSO_P = 2.4;
 /** Half-width of the open V neckline at torso height y. */
-const vEdge = (y: number) => 0.002 + 0.038 * Math.min(1, Math.max(0, (y - 0.402) / 0.092));
+const vEdge = (y: number) => 0.002 + 0.036 * Math.min(1, Math.max(0, (y - 0.402) / 0.086));
 /** |z| of the blouse surface at (x, y): back (side = +1) or front (side = -1). */
 function torsoMag(x: number, y: number, side = 1): number {
   const [hw, F, B] = torsoSec(y);
@@ -596,7 +597,7 @@ const newPose = (): Pose => ({
   armL: [[0.27, 0.26], [0.27, 0.26]],
 });
 
-const SHOULDER = (side: number) => V(side * 0.158, 0.415, -0.006);
+const SHOULDER = (side: number) => V(side * 0.158, 0.425, -0.006);
 /** Walking leg: thigh + shin (slightly shorter than the pedalling IK so she stands nearly straight). */
 const WALK_LEG = [0.43, 0.42];
 /** Gait: stance fraction and half step (m) for walk (0) … jog (1); cycle = ground covered per stride. */
@@ -1062,7 +1063,6 @@ export class Rider {
     }
     for (const s of [-1, 1]) {
       // Lapel flap folding out from the V edge.
-      this.add(torsoStrip([0.494, 0.47, 0.445, 0.422, 0.404].map((y, k) => [s * (vEdge(y) + (0.009 - 0.0015 * k)), y] as [number, number]), -1, 0.003, 0.011, 0.005, BLOUSE, 0.002), tp, rid);
     }
     this.add(torsoPatch(-0.085, 0.085, 0.44, 0.502, 1, 0.003, BLOUSE, 10, 4), tp, rid);
     this.add(torsoStrip([[0, 0.402], [0, 0.33], [0, 0.25], [0, 0.18], [0, SKIRT_WAIST_Y + 0.02]], -1, 0.0012, 0.0055, 0.0055, "#e9e6de", 0.0008), tp, rid);
@@ -1132,11 +1132,11 @@ export class Rider {
 
     // Neck: slim, leaning slightly forward, entering the head behind the chin.
     {
-      const neck = new Limb(tp, [0.039, 0.034, 0.03, 0.029], SKIN, M.skin, ID.skin);
+      const neck = new Limb(tp, [0.036, 0.031, 0.028, 0.027], SKIN, M.skin, ID.skin);
       neck.mesh.geometry.scale(1, 1, 0.92);
-      neck.set(V(0, 0.43, 0.01), V(0, 0.64, 0.002));
+      neck.set(V(0, 0.44, 0.012), V(0, 0.62, 0.006));
     }
-    this.head.position.set(0, 0.664, -0.012);
+    this.head.position.set(0, 0.646, -0.01);
     this.head.scale.setScalar(HEAD_SCALE);
     this.head.name = "riderHead";
     tp.add(this.head);
@@ -1240,9 +1240,9 @@ export class Rider {
       const local = (g: THREE.BufferGeometry) => g.translate(-P.x, -P.y, -P.z);
       // Almond opening in local angular coords: X toward the outer corner, Y up. The outer corner
       // lifts a touch; the lower lid is flatter than the upper.
-      const hw = 0.0189 / r0, hh = 0.0126 / r0, tilt = 0.14 * hh;
-      const yTop = (X: number) => hh * Math.pow(Math.max(0, 1 - (X / hw) ** 2), 0.62) + tilt * (X / hw) - 0.12 * hh * (X / hw) ** 3;
-      const yBot = (X: number) => -0.78 * hh * Math.pow(Math.max(0, 1 - (X / hw) ** 2), 0.75) + tilt * (X / hw);
+      const hw = 0.0185 / r0, hh = 0.0138 / r0, tilt = 0.02 * hh;
+      const yTop = (X: number) => hh * Math.pow(Math.max(0, 1 - (X / hw) ** 2), 0.52) + tilt * (X / hw) - 0.04 * hh * (X / hw) ** 3;
+      const yBot = (X: number) => -0.86 * hh * Math.pow(Math.max(0, 1 - (X / hw) ** 2), 0.62) + tilt * (X / hw);
       const at = (X: number, Y: number, lift: number) => {
         const d = dirOf(az + s * X, EYE_EL + Y);
         return d.clone().multiplyScalar(faceR(d)).addScaledVector(radialNormal(d, faceR), lift).sub(P);
@@ -1326,8 +1326,8 @@ export class Rider {
         const t = k / 14;
         lw.push(0.0008 + 0.0026 * Math.pow(t, 1.5));
       }
-      la.push(az + s * hw * 1.2);
-      le.push(EYE_EL + tilt + 0.4 * hh);
+      la.push(az + s * hw * 1.08);
+      le.push(EYE_EL + tilt + 0.22 * hh);
       lw.push(0.0007);
       eye.add(new THREE.Mesh(local(stroke(la, le, lw, 0.0036, "#1e120e")), uber(ID.eye, INK)));
       // Faint lower lash on the outer half.
@@ -1426,9 +1426,9 @@ export class Rider {
    * ears. Flat acetate material, one tiny highlight on each top rim; faint lenses with a glint.
    */
   private buildGlasses(eyeX: number, eyeY: number): void {
-    const FR = "#2a2024", HI = "#7a7078";
+    const FR = "#111111", HI = "#56606c";
     const W = 0.048, H = 0.031, RC = 0.0076;
-    const SIDE = 0.0011, TOP = 0.0015, BOT = 0.0011, DEPTH = 0.0016, CLEAR = 0.0052;
+    const SIDE = 0.0016, TOP = 0.0021, BOT = 0.0016, DEPTH = 0.0021, CLEAR = 0.0056;
     const rrect = <T extends THREE.Path>(shape: T, x0: number, y0: number, x1: number, y1: number, r: number): T => {
       shape.moveTo(x0 + r, y0);
       shape.lineTo(x1 - r, y0);
@@ -1498,7 +1498,7 @@ export class Rider {
       for (let k = 1; k <= 8; k++) path.push(outside(hinge.clone().lerp(earTop, k / 8), 0.0022));
       path.push(earTop.clone().lerp(behind, 0.5).add(V(s * 0.001, 0.001, 0)), behind);
       for (const p of path) {
-        parts.push(beam(prev, p, 0.0008, FR, M.lacquer, 6));
+        parts.push(beam(prev, p, 0.0011, FR, M.lacquer, 6));
         prev = p;
       }
     }
@@ -1637,7 +1637,7 @@ export class Rider {
         const grp = new THREE.Group();
         grp.position.copy(root);
         this.head.add(grp);
-        grp.add(new THREE.Mesh(hangLock(s * az0, el0, s * az1, el1, yEnd, w, fwd, curl).translate(-root.x, -root.y, -root.z), uber(ID.hair, 0.3)));
+        grp.add(new THREE.Mesh(hangLock(s * az0, el0, s * az1, el1, yEnd, w * 1.6, fwd * 0.5, curl).translate(-root.x, -root.y, -root.z), uber(ID.hair, 0.3)));
         this.fringe.push({ g: grp, radial: rd, side: V(0, 1, 0).cross(rd).normalize(), gain: 0.5 + 0.2 * k, ph: 2.1 + k * 1.9 + s, long: 1 });
       });
     }
@@ -1808,20 +1808,55 @@ export class Rider {
             const R = l < 2 ? 0.112 : 0.075;
             if (lat < R && lat > 1e-5) _sp.addScaledVector(_sq, (R - lat) / lat);
           }
-        // Seated: keep the cloth above both thighs (front half only lifts, fading toward the hip).
-        if (f > 0.3 && stand <= 0.5)
-          for (let l = 0; l < this.thighA.length; l++) {
+        // Seated: the front pleats are laid on the thigh they cover (hip → knee, a margin outside
+        // the thigh wherever the crank puts it), then hang from the knee; everything is then pushed
+        // out of both thigh and shin capsules so no angle ever shows a leg through the cloth.
+        if (stand < 1 && this.thighA.length === 2) {
+          const wf = smooth(0.28, 0.7, f) * (1 - stand);
+          if (wf > 0) {
+            const sx = Math.sin(a);
+            _rw.set(1, 0, 0).applyQuaternion(TQ);
+            const l = (this.thighA[0].x - TP.x) * _rw.x + (this.thighA[0].z - TP.z) * _rw.z > 0 === sx > 0 ? 0 : 1;
             const A = this.thighA[l], B = this.thighB[l];
-            const ax = B.x - A.x, az = B.z - A.z;
-            const u = Math.min(1, Math.max(0, ((_sp.x - A.x) * ax + (_sp.z - A.z) * az) / (ax * ax + az * az + 1e-6)));
-            _sr.copy(A).lerp(B, u);
-            const lat = Math.hypot(_sp.x - _sr.x, _sp.z - _sr.z);
-            const R = 0.1;
-            if (lat < R) {
-              const minY = _sr.y + Math.sqrt(R * R - lat * lat) * smooth(0.3, 0.55, f) * smooth(0.0, 0.25, u);
-              if (_sp.y < minY) _sp.y = minY;
+            _td.subVectors(B, A);
+            const L = _td.length();
+            _td.divideScalar(L);
+            _tu.set(0, 1, 0).addScaledVector(_td, -_td.y).normalize();
+            _ts.crossVectors(_td, _tu).normalize();
+            if (_ts.dot(_rw) * sx < 0) _ts.negate();
+            const th = -1.15 + 2.55 * Math.min(1, Math.abs(sx) / 0.92);
+            const TK = 0.56;
+            const u = Math.min(t / TK, 1);
+            const rOff = 0.088 - 0.03 * u + 0.017 + 0.005 * pleat;
+            _tp.copy(A).addScaledVector(_td, L * (u * 1.03))
+              .addScaledVector(_tu, Math.cos(th) * rOff)
+              .addScaledVector(_ts, Math.sin(th) * rOff);
+            if (t > TK) {
+              const h = (t - TK) / (1 - TK);
+              _tp.y -= 0.27 * h;
+              _tp.addScaledVector(_td, 0.035 * h * (1 - h * 0.5));
+              _tp.addScaledVector(_ts, Math.max(0, Math.sin(th)) * 0.03 * h);
             }
+            _tp.lerp(H, 1 - smooth(0.0, 0.3, t));
+            _tp.x += Math.sin(a) * flut;
+            _tp.y += flut * 0.5;
+            _tp.z += rz * flut;
+            _sp.lerp(_tp, wf);
           }
+          // Keep every pleat outside both thighs and shins (full 3D, a small margin).
+          for (let it = 0; it < 2; it++)
+            for (let k = 0; k < 4; k++) {
+              const A = k < 2 ? this.thighA[k] : this.shinA[k - 2], B = k < 2 ? this.thighB[k] : this.shinB[k - 2];
+              if (!A || !B) continue;
+              _sr.subVectors(B, A);
+              const uu = Math.min(1, Math.max(0, _sq.subVectors(_sp, A).dot(_sr) / (_sr.lengthSq() + 1e-6)));
+              const Rk = (k < 2 ? 0.088 - 0.03 * uu + 0.016 : 0.062 - 0.02 * uu + 0.012) * (1 - stand);
+              _sr.multiplyScalar(uu).add(A);
+              _sq.subVectors(_sp, _sr);
+              const lat = _sq.length();
+              if (lat < Rk && lat > 1e-5) _sp.addScaledVector(_sq, (Rk - lat) / lat);
+            }
+        }
         p.setXYZ(j * (cols + 1) + i, _sp.x, _sp.y, _sp.z);
       }
     }
@@ -1879,6 +1914,7 @@ export class Rider {
   }
 
   update(dt: number, s: RiderState, f?: FootState): void {
+    if (this.bike.crankHold !== null) s = { ...s, crank: this.bike.crankHold };
     this.lean.rotation.z = s.lean;
     this.bike.update(dt, s);
     const fb = f ? Math.min(1, Math.max(0, f.blend)) : 0;
@@ -2195,10 +2231,11 @@ export class Rider {
 
 const SKIRT_N = 20;
 /** Skirt rings: waist (on the torso), hips (on the torso), then the hanging drape. */
-const SKIRT_R = 9;
+const SKIRT_R = 15;
 const SKIRT_WAIST_Y = 0.118, SKIRT_HIP_Y = -0.005;
 const _sp = new THREE.Vector3(), _sr = new THREE.Vector3(), _sq = new THREE.Vector3();
 const _d1 = new THREE.Vector3(), _d2 = new THREE.Vector3(), _d3 = new THREE.Vector3();
+const _rw = new THREE.Vector3(), _td = new THREE.Vector3(), _tu = new THREE.Vector3(), _ts = new THREE.Vector3(), _tp = new THREE.Vector3();
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _m1 = new THREE.Matrix4();
 const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));

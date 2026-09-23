@@ -176,6 +176,8 @@ float shadowVis(vec3 wpos, vec3 N){
 // Three-step cel lighting (lit / shadow / dark shadow), painterly terminator, rim light.
 // Set by the skin branch: one crisp cel step on the form, but cast shadows (hair) stay soft.
 float gSoftCast = 0.0;
+// Rider cloth: gentle form shade where the blouse turns away from the camera.
+float gForm = 0.0;
 vec3 toonT(vec3 base, vec3 N, vec3 wpos, float jitter, float paint, float rimAmt, float soft, vec3 shTint){
   float br = brush(wpos, N);
   float t = dot(N, uSunDir) + (br - 0.5) * 0.32 * paint + jitter;
@@ -203,7 +205,8 @@ vec3 toonT(vec3 base, vec3 N, vec3 wpos, float jitter, float paint, float rimAmt
   float sunSide = smoothstep(-0.3, 0.3, dot(N, uSunDir) + 0.2) * (0.3 + 0.7 * sv);
   col += uRimColor * base * rim * (0.2 + 0.8 * sunSide) * 0.8;
   // Skin turning away from the camera takes one soft cel shade (far cheek in 3/4, jaw edges).
-  if (gSoftCast > 0.5) col = mix(col, cSh, smoothstep(0.5, 0.58, fr) * 0.7);
+  if (gSoftCast > 0.5) col = mix(col, cSh, smoothstep(0.46, 0.6, fr) * 0.75);
+  if (gForm > 0.0) col = mix(col, cSh, smoothstep(0.42, 0.62, fr) * gForm);
   col *= 1.0 + (br - 0.5) * 0.14 * paint;
   return min(col, vec3(0.97));
 }
@@ -515,6 +518,7 @@ void main(){
     paint = 0.0; soft = 0.02; rim = 0.0;
   } else if ((HAS(8) && mt == 8)) {     // cloth
     paint = 0.6; rim = 0.7;
+    if (uId == 13.0) gForm = 0.45;
   } else if ((HAS(9) && mt == 9)) {     // bark / weathered wood
     base *= 0.85 + 0.25 * vnoise(vec2(atan(vObj.x, vObj.z) * 3.0, vWPos.y * 0.7) * 2.0);
     paint = 1.2;
