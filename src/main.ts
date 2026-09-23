@@ -169,6 +169,7 @@ function frame(now: number) {
   }
   t += dt;
   G.uTime.value = t;
+  explore.enabled = started && !waiting;
 
   if (explore.bikeActive) {
     // Sub-step so a frame hitch can never tunnel the bike through a thin obstacle.

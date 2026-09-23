@@ -56,7 +56,7 @@ try {
   const state = () => R(() => window.__ride.explore.state);
   const want = (k) => !ONLY.length || ONLY.includes(k);
 
-  await page.goto(`${URL}?autoplay=1`, { waitUntil: "load" });
+  await page.goto(`${URL}?autoplay=1&skipintro=1`, { waitUntil: "load" });
   await page.waitForFunction(() => window.__ride?.ready === true, null, { timeout: 90_000 });
   await page.mouse.click(W / 2, H / 2);
   const s0 = await R(() => window.__ride.stats());

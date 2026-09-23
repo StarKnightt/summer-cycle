@@ -145,6 +145,8 @@ export class Explore {
   readonly foot: FootState = { blend: 0, side: 1, speed: 0, phase: 0, run: 0, turn: 0, look: 0, lookUp: 0, time: 0 };
   /** Test hook: walk in a fixed world direction instead of reading the keys. */
   autoWalk: { dx: number; dz: number; run: boolean } | null = null;
+  /** F / C only act once the ride is running (not on the intro loader's "press any key"). */
+  enabled = false;
   /** Idle glances around (off for posed test shots). */
   lookAround = true;
 
@@ -179,7 +181,7 @@ export class Explore {
     addEventListener("keydown", (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.code === "ShiftLeft" || e.code === "ShiftRight") this.shiftKey = true;
-      if (e.repeat) return;
+      if (e.repeat || !this.enabled) return;
       if (e.code === "KeyF") this.pressF();
       else if (e.code === "KeyC" && this.mode === "ride") this.chase.cycle();
     });
