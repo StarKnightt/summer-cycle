@@ -96,22 +96,23 @@ const dirOf = (az: number, el: number) => V(Math.sin(az) * Math.cos(el), Math.si
  * where only the chin is left in front of the neck). Above y = 0.03 the cranium closes as a round
  * cap. The front half is a flatter superellipse so the face reads as a soft oval plate.
  */
-const CAP_Y = 0.03, TOP_Y = 0.132, CHIN_Y = -0.1145;
+const CAP_Y = 0.03, TOP_Y = 0.132, CHIN_Y = -0.105;
 const PROF: [number, number, number, number][] = [
   // y       W       F       B
   [0.03, 0.088, 0.099, 0.112],
   [0.01, 0.087, 0.1, 0.11],
   [-0.012, 0.085, 0.099, 0.103],
-  [-0.03, 0.081, 0.099, 0.092],
-  [-0.045, 0.076, 0.098, 0.075],
-  [-0.058, 0.069, 0.096, 0.056],
-  [-0.07, 0.0625, 0.094, 0.034],
-  [-0.082, 0.0535, 0.0925, 0.01],
-  [-0.093, 0.043, 0.0925, -0.014],
-  [-0.102, 0.033, 0.09, -0.033],
-  [-0.108, 0.026, 0.085, -0.048],
-  [-0.112, 0.018, 0.077, -0.06],
-  [CHIN_Y, 0.0, 0.068, -0.066],
+  [-0.028, 0.081, 0.099, 0.093],
+  [-0.042, 0.0752, 0.098, 0.079],
+  // Jaw angle just below the ear, then a straight jaw line running forward to a small rounded chin.
+  [-0.053, 0.0675, 0.096, 0.061],
+  [-0.062, 0.06, 0.0945, 0.036],
+  [-0.071, 0.0515, 0.0935, 0.013],
+  [-0.08, 0.042, 0.093, -0.01],
+  [-0.088, 0.033, 0.092, -0.031],
+  [-0.095, 0.0245, 0.09, -0.049],
+  [-0.1, 0.016, 0.086, -0.062],
+  [CHIN_Y, 0.0, 0.079, -0.07],
 ];
 /** Dense lookup of the Catmull-Rom interpolated profile (W, F, B) from CAP_Y down to CHIN_Y. */
 const PROF_N = 1024;
@@ -155,11 +156,11 @@ function inHead(x: number, y: number, z: number): boolean {
   const D = (F + B) / 2;
   if (W <= 1e-5 || D <= 1e-5) return false;
   const v = (z - (B - F) / 2) / D, u = Math.abs(x) / W;
-  const p = v < 0 ? 2 + 0.55 * smooth(0.06, 0.0, y) * smooth(-0.105, -0.07, y) : 2;
+  const p = v < 0 ? 2 + 0.55 * smooth(0.06, 0.0, y) * smooth(-0.098, -0.066, y) : 2;
   return Math.pow(u, p) + v * v < 1;
 }
 /** Nose tip / bridge, cheekbones and lips as soft radial bumps (angles from the front axis). */
-const NOSE_EL = Math.atan2(-0.047, 0.1), LIP_EL = Math.atan2(-0.066, 0.096);
+const NOSE_EL = Math.atan2(-0.0435, 0.1), LIP_EL = Math.atan2(-0.061, 0.096);
 function faceBumps(d: THREE.Vector3): number {
   const az = Math.atan2(d.x, -d.z), el = Math.asin(Math.max(-1, Math.min(1, d.y)));
   if (Math.abs(az) > 1.2) return 0;
@@ -186,6 +187,8 @@ function faceR(d: THREE.Vector3): number {
 }
 /** Direction [az, el] of the face-surface point whose (x, y) is given (front half). */
 function faceAt(x: number, y: number): [number, number] {
+  // Features below the eyes were laid out on a longer lower face; map them onto the shorter one.
+  if (y < -0.012) y = -0.012 + (y + 0.012) * 0.9;
   let az = Math.asin(Math.max(-0.99, Math.min(0.99, x / 0.1))), el = Math.atan2(y, 0.1);
   for (let it = 0; it < 8; it++) {
     const d = dirOf(az, el);
@@ -253,7 +256,13 @@ function placeOnHead(g: THREE.BufferGeometry, az: number, el: number, lift: numb
 }
 
 /** Hair volume above the skin: fuller on the crown and the back. */
-const shellOff = (d: THREE.Vector3) => 0.013 + 0.033 * Math.pow(Math.max(0, d.y), 1.2) + 0.016 * Math.max(0, d.z) * (0.6 + 0.4 * Math.max(0, d.y + 0.3)) + 0.007 * Math.abs(d.x) * smooth(-0.2, 0.4, d.y);
+const shellOff = (d: THREE.Vector3) => 0.014 + 0.042 * Math.pow(Math.max(0, d.y), 1.1) + 0.022 * Math.max(0, d.z) * (0.6 + 0.4 * Math.max(0, d.y + 0.3)) + 0.008 * Math.abs(d.x) * smooth(-0.1, 0.5, d.y);
+
+/** Shell offset thinning to the skin over the last stretch above the hairline (no ledge at the edge). */
+function shellTap(d: THREE.Vector3): number {
+  const az = Math.atan2(d.x, -d.z), el = Math.asin(Math.max(-1, Math.min(1, d.y)));
+  return -0.005 + (shellOff(d) + 0.005) * smooth(0, 0.32, el - hairline(az));
+}
 
 /**
  * Tapered clump / ribbon along a path: diamond cross-section (sides ±w, ridge +th along `ups`,
@@ -332,7 +341,7 @@ function hairStrand(az0: number, el0: number, az1: number, el1: number, width: n
     const el = el0 + (el1 - el0) * t;
     const d = dirOf(az, el);
     const f = over ? 1 : smooth(hairline(az) - 0.3, hairline(az) + 0.02, el);
-    const off = (over ? 0.0022 + shellOff(d) : 0.006 + (shellOff(d) - 0.01) * f) + lift * t * t;
+    const off = (over ? 0.0022 + Math.max(0.004, shellTap(d)) : 0.006 + (shellOff(d) - 0.01) * f) + lift * t * t;
     pts.push(d.clone().multiplyScalar(faceR(d) + off));
     ups.push(radialNormal(d, faceR));
     const ww = width * (0.12 + 0.88 * (1 - Math.pow(t, 1.6))) * (1 - 0.6 * Math.pow(t, 8));
@@ -1123,9 +1132,9 @@ export class Rider {
 
     // Neck: slim, leaning slightly forward, entering the head behind the chin.
     {
-      const neck = new Limb(tp, [0.043, 0.039, 0.035, 0.034], SKIN, M.skin, ID.skin);
+      const neck = new Limb(tp, [0.039, 0.034, 0.03, 0.029], SKIN, M.skin, ID.skin);
       neck.mesh.geometry.scale(1, 1, 0.92);
-      neck.set(V(0, 0.43, 0.006), V(0, 0.64, -0.006));
+      neck.set(V(0, 0.43, 0.01), V(0, 0.64, 0.002));
     }
     this.head.position.set(0, 0.664, -0.012);
     this.head.scale.setScalar(HEAD_SCALE);
@@ -1231,7 +1240,7 @@ export class Rider {
       const local = (g: THREE.BufferGeometry) => g.translate(-P.x, -P.y, -P.z);
       // Almond opening in local angular coords: X toward the outer corner, Y up. The outer corner
       // lifts a touch; the lower lid is flatter than the upper.
-      const hw = 0.018 / r0, hh = 0.0118 / r0, tilt = 0.14 * hh;
+      const hw = 0.0189 / r0, hh = 0.0126 / r0, tilt = 0.14 * hh;
       const yTop = (X: number) => hh * Math.pow(Math.max(0, 1 - (X / hw) ** 2), 0.62) + tilt * (X / hw) - 0.12 * hh * (X / hw) ** 3;
       const yBot = (X: number) => -0.78 * hh * Math.pow(Math.max(0, 1 - (X / hw) ** 2), 0.75) + tilt * (X / hw);
       const at = (X: number, Y: number, lift: number) => {
@@ -1418,7 +1427,7 @@ export class Rider {
    */
   private buildGlasses(eyeX: number, eyeY: number): void {
     const FR = "#2a2024", HI = "#7a7078";
-    const W = 0.045, H = 0.029, RC = 0.0072;
+    const W = 0.048, H = 0.031, RC = 0.0076;
     const SIDE = 0.0011, TOP = 0.0015, BOT = 0.0011, DEPTH = 0.0016, CLEAR = 0.0052;
     const rrect = <T extends THREE.Path>(shape: T, x0: number, y0: number, x1: number, y1: number, r: number): T => {
       shape.moveTo(x0 + r, y0);
@@ -1521,7 +1530,7 @@ export class Rider {
       for (let j = 0; j < NR; j++) {
         const el = j === 0 ? e0 : e0 + 0.05 + (Math.PI / 2 - 0.03 - e0 - 0.05) * ((j - 1) / (NR - 1));
         const d = dirOf(az, el);
-        const p = d.clone().multiplyScalar(faceR(d) + (j === 0 ? -0.005 : shellOff(d)));
+        const p = d.clone().multiplyScalar(faceR(d) + (j === 0 ? -0.005 : shellTap(d)));
         pos.push(p.x, p.y, p.z);
       }
     }
@@ -1620,6 +1629,8 @@ export class Rider {
         [0.98, 0.95, 1.14, 0.18, CHIN_Y + 0.026, 0.0055, -0.006, 0.003],
         [1.3, 0.86, 1.46, 0.06, CHIN_Y + 0.018, 0.007, 0.007, 0.001],
         [1.16, 0.9, 1.34, 0.05, CHIN_Y - 0.02, 0.005, 0.002, 0.003],
+        [1.34, 0.8, 1.46, 0.04, CHIN_Y + 0.012, 0.012, 0.004, -0.003],
+        [1.42, 0.74, 1.52, 0.02, CHIN_Y + 0.028, 0.011, 0.006, -0.004],
       ] as number[][]).forEach(([az0, el0, az1, el1, yEnd, w, fwd, curl], k) => {
         const rd = dirOf(s * az0, el0);
         const root = rd.clone().multiplyScalar(faceR(rd) + shellOff(rd));
@@ -1635,7 +1646,7 @@ export class Rider {
     // segment lobed into strands) to mid-back plus a thinner secondary strand. Segments are
     // spring-damped and pushed off her back in update().
     const nd = dirOf(Math.PI, TIE_EL);
-    const tie = nd.clone().multiplyScalar(faceR(nd) + shellOff(nd) + 0.003);
+    const tie = nd.clone().multiplyScalar(faceR(nd) + shellTap(nd) + 0.006);
     const lobed = (rt: number, rb: number, len: number, lobes: number, twist: number) => {
       const prof = [
         new THREE.Vector2(0.0005, -len - rb * 0.8),
