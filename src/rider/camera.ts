@@ -304,14 +304,14 @@ export class ChaseCam {
     const e = this.blend * this.blend * (3 - 2 * this.blend);
     // Upright eye point over the saddle (her leaning head would put the bars straight below).
     rider.eyeWorld(this.eye);
-    this.eye.x -= fx * 0.34;
-    this.eye.z -= fz * 0.34;
+    this.eye.x -= fx * 0.22;
+    this.eye.z -= fz * 0.22;
     // ±2 cm bob on each downstroke, and a small side-to-side weight shift per crank revolution.
     this.eye.y = 1.52 + Math.sin(c.crank * 2) * 0.02 * c.pedaling;
     const shift = Math.sin(c.crank) * 0.012 * c.pedaling;
     this.eye.x += fz * shift;
     this.eye.z -= fx * shift;
-    const fl = new THREE.Vector3(this.eye.x + fx * 10, this.eye.y - 3.4, this.eye.z + fz * 10);
+    const fl = new THREE.Vector3(this.eye.x + fx * 10, this.eye.y - 4.2, this.eye.z + fz * 10);
     this.m4.lookAt(this.eye, fl, new THREE.Vector3(0, 1, 0));
     this.qF.setFromRotationMatrix(this.m4);
     this.qF.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), c.lean * 0.8 + Math.sin(c.crank) * 0.008 * c.pedaling));
@@ -324,7 +324,7 @@ export class ChaseCam {
     this.cam.near = TPP_NEAR + (FPP_NEAR - TPP_NEAR) * e;
     this.cam.updateProjectionMatrix();
     this.cam.updateMatrixWorld();
-    rider.setFirstPerson(e > 0.12);
+    rider.setFirstPerson(e > 0.12, e > 0.93);
     rider.setSkirtHidden(e > 0.3 && e < 0.97);
   }
 }

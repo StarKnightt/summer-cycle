@@ -84,6 +84,25 @@ try {
     await R(() => window.__ride.explore.walk(0, 0));
   }
 
+  if (ONLY.includes("fpp")) {
+    // First person: arms must read as whole arms running out of frame (no cut/flat ends).
+    await R(() => window.__ride.setCam("fpp"));
+    await wait(160);
+    await page.screenshot({ path: path.join(OUT, "fpp_mid_blend.png") });
+    await wait(1500);
+    await page.screenshot({ path: path.join(OUT, "fpp_straight.png") });
+    for (const [key, name] of [["ArrowLeft", "fpp_steer_left"], ["ArrowRight", "fpp_steer_right"]]) {
+      await page.keyboard.down(key);
+      await wait(700);
+      await page.screenshot({ path: path.join(OUT, `${name}.png`) });
+      await page.keyboard.up(key);
+      await wait(900);
+    }
+    await R(() => window.__ride.setCam("tpp"));
+    await wait(1200);
+    console.log("fpp shots done");
+  }
+
   if (ONLY.includes("outfit")) {
     // Modesty check: 8 steep (max 55°) top-down angles + 4 low angles on foot, then riding views,
     // composed into contact sheets.
