@@ -6,3 +6,4 @@ shots/critic-*/
 *.log
 *.mp4
 *.webm
+.worktrees/

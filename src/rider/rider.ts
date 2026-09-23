@@ -542,6 +542,8 @@ export class Rider {
   private shortLegs: Limb[] = [];
   private fringe: { g: THREE.Group; radial: THREE.Vector3; side: THREE.Vector3; gain: number; ph: number; long: number }[] = [];
   private sway = { a: 0, va: 0, l: 0, vl: 0, yaw: 0, pitch: 0 };
+  private readonly bouquet = new THREE.Group();
+  private bq = { x: 0, vx: 0, z: 0, vz: 0 };
   private walkShadow!: THREE.Mesh;
   private onFoot = false;
   private poseA = newPose();
@@ -720,7 +722,7 @@ export class Rider {
       parts.push([beam(a, b, 0.007, STRAP, M.cloth, 5), ID.rider], [beam(b, c, 0.007, STRAP, M.cloth, 5), ID.rider]);
     }
     // Leeks: white stalks, pale neck, split green tops.
-    const leeks: [number, number, number, number][] = [[0.09, -0.1, 0.2, -0.75], [0.125, -0.085, 0.36, -0.7], [0.055, -0.09, 0.05, -0.8]];
+    const leeks: [number, number, number, number][] = [[0.125, -0.085, 0.36, -0.7]];
     leeks.forEach(([x, dz, dx, dzz], k) => {
       const base = V(x, floor + 0.02, bz + dz);
       const dir = V(dx, 1, dzz).normalize();
@@ -737,6 +739,61 @@ export class Rider {
       }
     });
     for (const [g, id] of parts) this.add(g.translate(-HEAD_BOT.x, -HEAD_BOT.y, -HEAD_BOT.z), this.steer, id);
+    this.buildBouquet(V(-0.075, floor + 0.01, bz - 0.075));
+  }
+
+  /**
+   * Little summer bouquet in kraft paper: two sunflowers, cosmos and baby's breath. Its own group
+   * pivots at the basket floor so it can sway on a spring (see update()).
+   */
+  private buildBouquet(base: THREE.Vector3): void {
+    const g = this.bouquet;
+    g.position.copy(base).sub(HEAD_BOT);
+    this.steer.add(g);
+    const parts: [THREE.BufferGeometry, number][] = [];
+    const wrap = prep(new THREE.CylinderGeometry(0.058, 0.022, 0.2, 12, 1, true), "#d6c49a", M.cloth);
+    wrap.translate(0, 0.12, 0);
+    wrap.rotateX(-0.12);
+    parts.push([wrap, ID.bike]);
+    parts.push([xf(cyl(0.033, 0.033, 0.018, "#c8342c", M.cloth, 12), 0, 0.075, -0.004), ID.rider]);
+    const flower = (tip: THREE.Vector3, kind: 0 | 1 | 2, tint: string) => {
+      parts.push([beam(V(0, 0.02, 0), tip, 0.0035, "#4a7a30", M.plain, 4), ID.flower]);
+      const dir = tip.clone().normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), dir.clone().lerp(V(0, 0, 1), 0.35).normalize());
+      const head: THREE.BufferGeometry[] = [];
+      if (kind === 0) {
+        head.push(xf(cyl(0.022, 0.022, 0.012, "#5a3a1a", M.plain, 12), 0, 0.004, 0));
+        for (let i = 0; i < 12; i++) {
+          const a = (i / 12) * Math.PI * 2;
+          const p = box(0.024, 0.004, 0.011, "#f2c230", M.plain);
+          p.translate(0.031, 0, 0);
+          p.rotateY(a);
+          head.push(p);
+        }
+      } else if (kind === 1) {
+        head.push(xf(sphere(0.007, "#f2c230", M.plain, 6, 4), 0, 0.004, 0));
+        for (let i = 0; i < 8; i++) {
+          const p = box(0.02, 0.003, 0.011, tint, M.plain);
+          p.translate(0.014, 0, 0);
+          p.rotateY((i / 8) * Math.PI * 2);
+          head.push(p);
+        }
+      } else {
+        for (let i = 0; i < 7; i++) head.push(xf(sphere(0.0055, "#fbfaf4", M.plain, 5, 3), Math.cos(i * 2.4) * 0.016 * Math.sqrt(i / 7), 0.004 * (i % 3), Math.sin(i * 2.4) * 0.016 * Math.sqrt(i / 7)));
+      }
+      for (const h of head) {
+        h.applyQuaternion(q);
+        h.translate(tip.x, tip.y, tip.z);
+        parts.push([h, kind === 2 ? ID.flower : ID.rider]);
+      }
+    };
+    flower(V(0.004, 0.3, 0.02), 0, "");
+    flower(V(-0.04, 0.25, 0.035), 0, "");
+    flower(V(0.045, 0.27, 0.01), 1, "#f2a0c0");
+    flower(V(-0.022, 0.285, -0.03), 1, "#fbf6f0");
+    flower(V(0.03, 0.23, 0.05), 1, "#e070a0");
+    for (const [x, y, z] of [[-0.06, 0.24, 0.0], [0.06, 0.24, 0.035], [0.015, 0.27, -0.045], [-0.03, 0.22, 0.06], [0.055, 0.21, -0.02]]) flower(V(x, y, z), 2, "");
+    for (const [geo, id] of parts) this.add(geo.scale(1.35, 1.35, 1.35), g, id);
   }
 
   /** Mitten hands closed around the grips (steer-space, so they follow the bars exactly). */
@@ -1605,6 +1662,18 @@ export class Rider {
     }
     for (const e of this.eyes) e.scale.y = 1 - 0.9 * lid;
     this.swayFringe(dt, s.time, f && fb > 0 ? f.speed : s.speed);
+    // Bouquet: a light spring nodding back with speed, swinging with steering and bumps.
+    {
+      const b = this.bq, sp = Math.abs(s.speed);
+      const tx = -0.05 - Math.min(sp, 8) * 0.018 + Math.sin(s.time * 2.1) * 0.03 * Math.min(1, sp / 3);
+      const tz = -s.steer * 0.25 + Math.sin(s.time * 3.3 + 1) * 0.025 * Math.min(1, sp / 3);
+      const h = Math.min(dt, 1 / 30);
+      b.vx += ((tx - b.x) * 90 - b.vx * 7) * h;
+      b.vz += ((tz - b.z) * 90 - b.vz * 7) * h;
+      b.x += b.vx * h;
+      b.z += b.vz * h;
+      this.bouquet.rotation.set(b.x, 0, b.z);
+    }
   }
 
   /** 0 seated … 1 standing (how far the dismount has got). */

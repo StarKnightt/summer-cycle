@@ -11,6 +11,10 @@ export const M = {
   fringeCard: 21,
   /** Glasses acetate: flat clean toon, no brush texture, no rim light. */
   lacquer: 22,
+  /** Canvas-painted signage (signAtlas uv); signGlow adds a soft self-lit panel. */
+  sign: 23, signGlow: 24,
+  /** White plaster with painted weathering. */
+  plaster: 25,
 } as const;
 
 /** Outline groups: lines are drawn where neighbouring pixels belong to different groups. */

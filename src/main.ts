@@ -4,6 +4,7 @@ import { Post } from "./render/post";
 import { LAYER_REFLECT, LAYER_SHADOW, PaddyReflection, SunShadow, onLayers } from "./render/lightpasses";
 import { World, protoSteps, type Contact } from "./world/chunks";
 import { Sky } from "./world/sky";
+import { Birds } from "./world/birds";
 import { L, roadX, roadYaw } from "./world/road";
 import { Rider } from "./rider/rider";
 import { Controller } from "./rider/controller";
@@ -14,6 +15,7 @@ import { RideAudio } from "./audio";
 import { Loader, type Stage } from "./loader";
 import { precompile, warmDraws } from "./render/precompile";
 import { leafAtlas } from "./render/leafAtlas";
+import { signAtlas } from "./render/signAtlas";
 
 const params = new URLSearchParams(location.search);
 const AUTOPLAY = params.has("autoplay") && params.get("autoplay") !== "0";
@@ -31,6 +33,7 @@ renderer.info.autoReset = false;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 G.uLeafTex.value = leafAtlas(renderer);
+G.uSignTex.value = signAtlas(renderer);
 
 const loader = new Loader(SKIP_INTRO);
 (window as unknown as { __loader: Loader }).__loader = loader;
@@ -71,6 +74,8 @@ const rider = await step("rider", "rider", W_RIDER, () => new Rider());
 onLayers(rider.lean, LAYER_SHADOW, LAYER_REFLECT);
 scene.add(rider.root);
 scene.add(rider.walker);
+const birds = new Birds();
+scene.add(birds.group);
 
 const shadow = new SunShadow(2048, 55);
 const reflection = new PaddyReflection(Math.floor(innerWidth * 0.5), Math.floor(innerHeight * 0.5));
@@ -95,7 +100,7 @@ let msaaStepAt = 0;
   bootLog.push(["compile", Math.round(performance.now() - s)]);
   // The first chunk meets every shader for the first time, so it goes mesh by mesh.
   const [first, ...rest] = world.root.children;
-  const parts = [...first.children, ...rest, sky.group, sky.motes, rider.root];
+  const parts = [...first.children, ...rest, sky.group, sky.motes, rider.root, birds.group];
   let tp = performance.now();
   await warmDraws(renderer, scene, chase.cam, post, shadow, parts, (i) => {
     const n = performance.now();
@@ -135,6 +140,7 @@ const fpsLog: number[] = [];
 let last = performance.now();
 let t = 0;
 const shadowCenter = new THREE.Vector3();
+const _actor = new THREE.Vector3();
 let near = { trees: 0, houses: 0 };
 /** The bike as three circles: body at the saddle, front wheel + basket ahead, rear wheel behind. */
 function bikeContact(x: number, z: number): Contact {
@@ -187,6 +193,7 @@ function frame(now: number) {
     ctl.z += L;
     explore.shift(L);
     chase.shift(L);
+    birds.shift(L);
   }
   const px = explore.playerX, pz = explore.playerZ;
   world.update(pz);
@@ -210,6 +217,7 @@ function frame(now: number) {
   if (onFoot) explore.updateCamera(dt, chase.cam);
   else chase.update(dt, ctl, t, rider);
   sky.follow(chase.cam.position);
+  birds.update(dt, t, chase.cam, _actor.set(px, 0, pz));
   if (audio.state === "running") {
     near = world.closeness(px, pz);
     const u = px - roadX(pz);
@@ -289,6 +297,7 @@ declare global {
 window.__ride = {
   scene,
   post,
+  birds,
   get msaa() {
     return post.msaa;
   },

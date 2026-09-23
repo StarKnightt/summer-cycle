@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { M, beam, blob, box, boxM, cyl, merge, prep, sphere, spherize, xf } from "./geo";
 import { mulberry32, range } from "../core/rng";
 import { LEAF_CELL, cellUv } from "../render/leafAtlas";
+import { candyCounter, gachapon, koriFlag, potRow, sign } from "./street";
 
 type Geo = THREE.BufferGeometry;
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -42,6 +43,20 @@ function roof(w: number, d: number, y0: number, pitch: number, over: number): Ge
     const lip = box(w + over * 2 + 0.02, 0.12, 0.2, TILE_DARK, M.plain);
     xf(lip, 0, y0 + rise - half * Math.tan(pitch) + 0.06, s * (half - 0.08));
     out.push(lip);
+    // Modelled kawara ribs running down the slope (round-tile rows), catching the low sun.
+    const nx = Math.round((w + over * 2) / 0.3);
+    const ny = Math.cos(s * pitch), nz = Math.sin(s * pitch);
+    for (let i = 0; i <= nx; i++) {
+      const rib = box(0.08, 0.07, slope - 0.1, i % 2 ? TILE : TILE_DARK, M.plain);
+      rib.rotateX(s * pitch);
+      rib.translate(-w / 2 - over + i * ((w + over * 2) / nx), y0 + rise - (half * Math.tan(pitch)) / 2 + 0.08 + ny * 0.11, (s * half) / 2 + nz * 0.11);
+      out.push(rib);
+    }
+    // Half-round gutter hung under the eave edge.
+    const gut = cyl(0.075, 0.075, w + over * 2, "#6b6f70", M.metal, 8);
+    gut.rotateZ(Math.PI / 2);
+    gut.translate(0, y0 + rise - half * Math.tan(pitch) - 0.05, s * (half + 0.02));
+    out.push(gut);
   }
   const ridge = box(w + over * 2 + 0.1, 0.26, 0.36, TILE_DARK, M.plain);
   xf(ridge, 0, y0 + rise + 0.14, 0);
@@ -60,7 +75,7 @@ function roof(w: number, d: number, y0: number, pitch: number, over: number): Ge
   }
   // Gable walls: white plaster with exposed timber.
   for (const s of [-1, 1]) {
-    const gb = gable(d, rise, 0.1, PLASTER, M.plain);
+    const gb = gable(d, rise, 0.1, PLASTER, M.plaster);
     gb.rotateY(Math.PI / 2);
     gb.translate((s * w) / 2 - s * 0.05, y0, 0);
     out.push(gb);
@@ -78,11 +93,24 @@ function hisashi(w: number, depth: number, y: number, z: number): Geo[] {
   const lip = box(w + 0.02, 0.1, 0.16, TILE_DARK, M.plain);
   xf(lip, 0, y - Math.sin(0.36) * depth * 0.5, z + depth * Math.cos(0.36) - 0.06);
   const out = [g, lip];
-  for (const x of [-w / 2 + 0.25, 0, w / 2 - 0.25]) out.push(xf(box(0.08, 0.08, depth * 0.8, WOOD_DARK), x, y - 0.28, z + depth * 0.4, -0.5));
+  const nb = Math.max(2, Math.round(w / 1.4));
+  for (let i = 0; i <= nb; i++) out.push(xf(box(0.08, 0.08, depth * 0.8, WOOD_DARK), -w / 2 + 0.2 + (i * (w - 0.4)) / nb, y - 0.28, z + depth * 0.4, -0.5));
   return out;
 }
 
 const panel = (w: number, h: number, mat: number) => prep(new THREE.BoxGeometry(w, h, 0.05), "#ffffff", mat);
+
+/** Window casing + sill + muntins around a w x h opening centred at the origin (local +Z out). */
+function frame(w: number, h: number, bars: [number, number] = [1, 1]): Geo[] {
+  const out: Geo[] = [];
+  const t = 0.07;
+  out.push(xf(box(w + t * 2, t, 0.09, WOOD_DARK), 0, h / 2 + t / 2, 0.03));
+  out.push(xf(box(w + t * 2 + 0.1, 0.06, 0.16, WOOD_DARK), 0, -h / 2 - 0.03, 0.06));
+  for (const sx of [-1, 1]) out.push(xf(box(t, h, 0.09, WOOD_DARK), sx * (w / 2 + t / 2), 0, 0.03));
+  for (let i = 1; i <= bars[0]; i++) out.push(xf(box(0.025, h, 0.04, WOOD_DARK), -w / 2 + (i * w) / (bars[0] + 1), 0, 0.035));
+  for (let i = 1; i <= bars[1]; i++) out.push(xf(box(w, 0.025, 0.04, WOOD_DARK), 0, -h / 2 + (i * h) / (bars[1] + 1), 0.035));
+  return out;
+}
 
 /** Koshi: dense vertical wooden lattice screen (front windows of machiya). */
 function koshi(w: number, h: number): Geo[] {
@@ -97,7 +125,14 @@ function koshi(w: number, h: number): Geo[] {
 /** Sliding glass doors in a wooden frame. */
 function slidingDoor(w: number, h: number): Geo[] {
   const out: Geo[] = [];
-  for (const s of [-1, 1]) out.push(xf(panel(w / 2 - 0.02, h, M.glass), (s * w) / 4, 0, 0));
+  for (const s of [-1, 1]) {
+    out.push(xf(panel(w / 2 - 0.02, h, M.glass), (s * w) / 4, 0, 0));
+    // Glazing bars (4-pane leaf), a kick panel and a dark finger pull.
+    for (const t of [-0.17, 0.17]) out.push(xf(box(w / 2 - 0.04, 0.03, 0.05, WOOD_DARK), (s * w) / 4, t * h, 0.03));
+    out.push(xf(box(0.03, h * 0.66, 0.05, WOOD_DARK), (s * w) / 4, 0.17 * h, 0.03));
+    out.push(xf(box(w / 2 - 0.04, h * 0.18, 0.04, WOOD, M.planks), (s * w) / 4, -h * 0.41, 0.025));
+    out.push(xf(box(0.04, 0.14, 0.03, "#1a1410"), (s * w) / 4 - s * (w / 4 - 0.08), 0.02, 0.05));
+  }
   out.push(xf(box(w + 0.1, 0.1, 0.08, WOOD_DARK), 0, h / 2 + 0.05, 0.02));
   out.push(xf(box(w + 0.1, 0.06, 0.08, WOOD_DARK), 0, -h / 2, 0.02));
   for (const x of [-w / 2, 0, w / 2]) out.push(xf(box(0.06, h, 0.07, WOOD_DARK), x, 0, 0.02));
@@ -168,7 +203,10 @@ export interface HouseOpts {
   seed: number;
   ac?: boolean;
   balcony?: boolean;
+  kind?: ShopKind;
 }
+
+export type ShopKind = "dagashi" | "ramen" | "closed";
 
 /**
  * Traditional wooden house (machiya-style), front facing local +Z, the -X side faces the road.
@@ -184,11 +222,13 @@ export function house(o: HouseOpts): Geo {
   out.push(xf(box(w + 0.15, base, d + 0.15, STONE, M.stone), 0, base / 2, 0));
   // Ground floor: stained vertical boards with a plaster band under the eave.
   out.push(xf(box(w, f1 - 0.4, d, WOOD_STAIN, M.planks), 0, base + (f1 - 0.4) / 2, 0));
-  out.push(xf(box(w + 0.02, 0.4, d + 0.02, PLASTER), 0, base + f1 - 0.2, 0));
+  out.push(xf(box(w + 0.02, 0.4, d + 0.02, PLASTER, M.plaster), 0, base + f1 - 0.2, 0));
   // Corner posts.
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) out.push(xf(box(0.14, f1, 0.14, WOOD_DARK), (sx * w) / 2, base + f1 / 2, (sz * d) / 2));
   const zf = d / 2 + 0.03;
-  if (o.shop) {
+  if (o.kind) {
+    out.push(...shopFront(o.kind, w, d, base, zf, o.seed));
+  } else if (o.shop) {
     for (const g of slidingDoor(w * 0.5, 2.0)) out.push(xf(g, -w * 0.15, base + 1.0, zf));
     // Faint warm interior behind the doors (daylight: dim, never a lamp).
     out.push(xf(prep(new THREE.BoxGeometry(w * 0.48, 1.9, 0.02), "#6a4a2a", M.lantern), -w * 0.15, base + 0.98, zf - 0.03));
@@ -214,7 +254,7 @@ export function house(o: HouseOpts): Geo {
     // Vertical sign board.
     const sx = w / 2 - 0.3;
     out.push(xf(box(0.42, 1.7, 0.08, "#d24e76", M.metal), sx, base + 3.3, zf + 0.5));
-    for (let i = 0; i < 4; i++) out.push(xf(box(0.24, 0.22, 0.1, "#fbf3ea", M.plain), sx, base + 3.95 - i * 0.38, zf + 0.51));
+    out.push(xf(sign("sake", 0.34, 1.5), sx, base + 3.3, zf + 0.545));
     // Vending machine, bench, crates.
     out.push(xf(box(0.9, 1.8, 0.7, "#e2e0da", M.metal), -w / 2 - 0.6, 0.9, d / 2 - 0.5));
     out.push(xf(box(0.72, 0.8, 0.06, "#c43a36", M.metal), -w / 2 - 0.6, 1.25, d / 2 - 0.13));
@@ -242,6 +282,11 @@ export function house(o: HouseOpts): Geo {
     for (const g of koshi(1.6, 1.0)) side.push(xf(g, -d * 0.18, base + 1.55, 0.02));
     side.push(xf(panel(1.6, 1.0, M.shoji), -d * 0.18, base + 1.55, -0.01));
     side.push(xf(panel(0.9, 1.6, M.glass), d * 0.28, base + 1.1, 0));
+    for (const g of frame(0.9, 1.6, [1, 2])) side.push(xf(g, d * 0.28, base + 1.1, 0));
+    // Electric meter box + conduit up to the eave.
+    side.push(xf(box(0.3, 0.4, 0.12, "#c8cac4", M.metal), -d * 0.42, base + 1.35, 0.06));
+    side.push(xf(cyl(0.07, 0.07, 0.02, "#f2f0e8", M.plain, 12), -d * 0.42, base + 1.42, 0.13, Math.PI / 2));
+    side.push(xf(box(0.05, 1.2, 0.05, "#5e5a52", M.metal), -d * 0.42, base + 2.15, 0.04));
     for (const g of side) {
       g.rotateY(-Math.PI / 2);
       g.translate(-w / 2 - 0.03, 0, 0);
@@ -250,10 +295,12 @@ export function house(o: HouseOpts): Geo {
   }
   // Far side (+X): one shoji window.
   {
-    const g = panel(1.2, 0.9, M.shoji);
-    g.rotateY(Math.PI / 2);
-    g.translate(w / 2 + 0.03, base + 1.6, range(r, -d * 0.2, d * 0.2));
-    out.push(g);
+    const zz = range(r, -d * 0.2, d * 0.2);
+    for (const g of [panel(1.2, 0.9, M.shoji), ...frame(1.2, 0.9, [0, 0])]) {
+      g.rotateY(Math.PI / 2);
+      g.translate(w / 2 + 0.03, base + 1.6, zz);
+      out.push(g);
+    }
   }
   let roofY = base + f1;
   out.push(...hisashi(w + 0.6, 1.2, roofY + 0.25, d / 2));
@@ -266,11 +313,12 @@ export function house(o: HouseOpts): Geo {
     const w2 = w - 0.3, d2 = d - 0.6;
     const z2 = -0.1;
     out.push(xf(box(w2, f2 - 0.45, d2, WOOD_STAIN, M.planks), 0, roofY + (f2 - 0.45) / 2, z2));
-    out.push(xf(box(w2 + 0.02, 0.45, d2 + 0.02, PLASTER), 0, roofY + f2 - 0.225, z2));
+    out.push(xf(box(w2 + 0.02, 0.45, d2 + 0.02, PLASTER, M.plaster), 0, roofY + f2 - 0.225, z2));
     const zf2 = z2 + d2 / 2 + 0.03;
     for (const g of koshi(w2 * 0.3, 0.95)) out.push(xf(g, -w2 * 0.25, roofY + 1.3, zf2 + 0.02));
     out.push(xf(panel(w2 * 0.3, 0.95, M.shoji), -w2 * 0.25, roofY + 1.3, zf2 - 0.01));
     out.push(xf(panel(w2 * 0.28, 1.1, M.shoji), w2 * 0.22, roofY + 1.25, zf2));
+    for (const g of frame(w2 * 0.28, 1.1, [1, 0])) out.push(xf(g, w2 * 0.22, roofY + 1.25, zf2));
     for (const x of [-w2 / 2 + 0.05, w2 / 2 - 0.05]) out.push(xf(box(0.12, f2, 0.12, WOOD_DARK), x, roofY + f2 / 2, zf2));
     out.push(xf(box(w2, 0.1, 0.06, WOOD_DARK), 0, roofY + f2 - 0.45, zf2 + 0.01));
     // 2F road-side window.
@@ -309,7 +357,83 @@ export function house(o: HouseOpts): Geo {
     out.push(g);
   }
   out.push(xf(cyl(0.04, 0.04, roofY, "#5e5a52", M.metal, 6), -w / 2 - 0.08, roofY / 2, d / 2 - 0.1));
+  // Second downpipe from the front gutter corner, with an elbow back to the wall.
+  {
+    const gx = w / 2 + 0.75, gz = d / 2 + 0.9, gy = roofY - 0.25;
+    out.push(beam(V(gx, gy, gz), V(w / 2 + 0.08, gy - 0.6, d / 2 + 0.08), 0.04, "#5e5a52", M.metal, 6));
+    out.push(xf(cyl(0.04, 0.04, gy - 0.6, "#5e5a52", M.metal, 6), w / 2 + 0.08, (gy - 0.6) / 2, d / 2 + 0.08));
+  }
   return merge(out);
+}
+
+/** Ground-floor shopfronts for the countryside shop row (front = local +Z, face at zf). */
+function shopFront(kind: ShopKind, w: number, d: number, base: number, zf: number, seed: number): Geo[] {
+  const out: Geo[] = [];
+  const y0 = base;
+  if (kind === "dagashi") {
+    // Open front: dim interior, doors slid aside, shelves of sweets inside.
+    out.push(xf(prep(new THREE.BoxGeometry(w * 0.7, 2.0, 0.02), "#5a3e24", M.lantern), -w * 0.08, y0 + 1.0, zf - 0.03));
+    for (const g of slidingDoor(w * 0.3, 2.0)) out.push(xf(g, w * 0.3, y0 + 1.0, zf + 0.01));
+    for (let i = 0; i < 3; i++) out.push(xf(box(w * 0.55, 0.04, 0.3, "#9a7650"), -w * 0.12, y0 + 0.5 + i * 0.5, zf - 0.2));
+    for (let i = 0; i < 18; i++) out.push(xf(box(0.14, 0.16, 0.1, ["#e8506a", "#f4d040", "#6ab0e8", "#f0a040", "#8ad070"][i % 5], M.plain), -w * 0.37 + (i % 6) * (w * 0.1), y0 + 0.6 + Math.floor(i / 6) * 0.5, zf - 0.2));
+    // Striped awning with a valance, board sign above it.
+    const aw = sign("awning", w * 0.92, 1.25);
+    aw.rotateX(-Math.PI / 2 + 0.42);
+    aw.translate(0, y0 + 2.45, zf + 0.55);
+    out.push(aw);
+    const val = sign("awning", w * 0.92, 0.22);
+    val.translate(0, y0 + 2.12, zf + 1.13);
+    out.push(val);
+    for (const sx of [-1, 1]) out.push(beam(V(sx * w * 0.44, y0 + 2.2, zf + 1.1), V(sx * w * 0.44, y0 + 2.7, zf + 0.02), 0.02, "#5a5e62", M.metal, 4));
+    // Roof-top kanban standing on the eave, leaning slightly toward the street.
+    const kb = [box(2.7, 0.82, 0.08, "#e8e0d0"), sign("dagashi", 2.6, 0.72).translate(0, 0, 0.045)];
+    for (const x of [-1.1, 1.1]) kb.push(box(0.06, 0.9, 0.06, WOOD_DARK).translate(x, -0.6, -0.06));
+    for (const g of kb) out.push(xf(g, 0, y0 + 3.95, zf + 0.75, -0.12));
+    out.push(xf(candyCounter(seed), -w * 0.18, 0, zf + 0.75));
+    out.push(xf(gachapon(), -w / 2 + 0.25, 0, zf + 0.55));
+    out.push(xf(koriFlag(), w * 0.38, 0, zf + 1.35));
+    out.push(xf(box(0.7, 0.5, 0.45, "#f4f4f0", M.metal), w * 0.3, 0.25, zf + 0.5));
+    out.push(xf(box(0.72, 0.06, 0.47, "#3a7ac8", M.metal), w * 0.3, 0.52, zf + 0.5));
+    out.push(xf(sign("tabako", 0.5, 0.3), -w / 2 + 0.3, y0 + 2.0, zf + 0.02));
+  } else if (kind === "ramen") {
+    for (const g of slidingDoor(w * 0.42, 2.0)) out.push(xf(g, -w * 0.12, y0 + 1.0, zf));
+    out.push(xf(prep(new THREE.BoxGeometry(w * 0.4, 1.9, 0.02), "#6a4a2a", M.lantern), -w * 0.12, y0 + 0.98, zf - 0.03));
+    // Noren (split curtain) that sways, over the door.
+    const nr = sign("noren", w * 0.46, 0.85, false, 4);
+    const pa = nr.attributes.position, wa = nr.attributes.aWind as THREE.BufferAttribute;
+    for (let k = 0; k < pa.count; k++) wa.setX(k, Math.pow((0.425 - pa.getY(k)) / 0.85, 2) * 0.12);
+    nr.translate(-w * 0.12, y0 + 1.7, zf + 0.16);
+    out.push(nr);
+    out.push(xf(box(w * 0.5, 0.05, 0.05, WOOD_DARK), -w * 0.12, y0 + 2.14, zf + 0.16));
+    // Red chochin lantern hanging beside the door.
+    const l = prep(new THREE.SphereGeometry(0.26, 14, 10), "#d23a2e", M.lantern);
+    l.scale(1, 1.45, 1);
+    l.translate(w * 0.2, y0 + 1.75, zf + 0.35);
+    out.push(l);
+    for (let i = -2; i <= 2; i++) {
+      const rr = 0.268 * Math.sqrt(1 - Math.pow(i / 3, 2));
+      out.push(xf(cyl(rr, rr, 0.012, "#9a2a22", M.plain, 14), w * 0.2, y0 + 1.75 + i * 0.12, zf + 0.35));
+    }
+    for (const dy of [-0.4, 0.4]) out.push(xf(cyl(0.16, 0.16, 0.06, "#2a2220", M.plain, 12), w * 0.2, y0 + 1.75 + dy, zf + 0.35));
+    out.push(xf(box(0.03, 0.3, 0.03, "#2a2220"), w * 0.2, y0 + 2.3, zf + 0.35));
+    out.push(xf(box(2.4, 0.74, 0.08, "#8a2a22"), 0, y0 + 2.62, zf + 0.06));
+    out.push(xf(sign("ramen", 2.3, 0.68), 0, y0 + 2.62, zf + 0.105));
+    for (const g of koshi(w * 0.25, 1.2)) out.push(xf(g, w * 0.34, y0 + 1.3, zf + 0.02));
+    out.push(xf(panel(w * 0.25, 1.2, M.shoji), w * 0.34, y0 + 1.3, zf - 0.01));
+    out.push(xf(box(1.4, 0.07, 0.35, "#9a7650"), w * 0.28, 0.44, zf + 0.7));
+    for (const x of [-0.55, 0.55]) out.push(xf(box(0.06, 0.42, 0.3, WOOD_DARK), w * 0.28 + x, 0.21, zf + 0.7));
+  } else {
+    // Closed shop: rolling shutter under its housing, faded board, rust.
+    out.push(xf(sign("shutter", w * 0.78, 2.15), -w * 0.04, y0 + 1.08, zf + 0.02));
+    out.push(xf(box(w * 0.82, 0.3, 0.3, "#9a9ea0", M.metal), -w * 0.04, y0 + 2.3, zf + 0.12));
+    for (const sx of [-1, 1]) out.push(xf(box(0.06, 2.15, 0.08, "#8a8e90", M.metal), -w * 0.04 + sx * w * 0.39, y0 + 1.08, zf + 0.03));
+    out.push(xf(box(2.8, 0.78, 0.08, "#7a8a92"), 0, y0 + 2.85, zf + 0.06));
+    out.push(xf(sign("closed", 2.7, 0.7), 0, y0 + 2.85, zf + 0.105));
+    out.push(xf(sign("tabako", 0.45, 0.28), w * 0.42, y0 + 1.7, zf + 0.02));
+  }
+  out.push(xf(potRow(seed + 5, 3), -w / 2 + 0.2, 0, zf + 0.3));
+  void d;
+  return out;
 }
 
 // ------------------------------------------------------------------ trees

@@ -163,9 +163,14 @@ export class Loader {
     this.spans[this.cur].classList.remove("on");
     this.cur ^= 1;
     const s = this.spans[this.cur];
+    // Start the incoming line just below its rest position (the outgoing one drifts up).
+    s.style.transition = "none";
+    s.style.transform = "translateY(5px)";
     s.textContent = text;
     s.classList.toggle("prompt", prompt);
     void s.offsetWidth;
+    s.style.transition = "";
+    s.style.transform = "";
     s.classList.add("on");
     this.lastSwap = performance.now();
   }

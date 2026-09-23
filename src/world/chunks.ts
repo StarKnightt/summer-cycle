@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { CHUNK, L, NCHUNK, RIBBON_HALF, faceRoadFromRight, groundH, pnoise, roadX, roadYaw, smooth } from "./road";
 import { ID, M, box, merge, prep, shear, wire, xf } from "./geo";
+import { bridgePlate, busStop, convexMirror, drainCanal, jizo, keiTruck, laundryPole, parkedBike, phoneBox, potRow, shrine, stoneLantern, tomareSign, vegStand, vendingMachine } from "./street";
+import type { ShopKind } from "./props";
 import { bambooGrove, farHouse, fence, house, pole, postBox, scarecrow, school, shed, stoneMarker, tree, warningSign, waterTower, type TreeKind } from "./props";
 import { boulder, butterfly, floretCluster, flower, flowerSpike, fringeGrass, grassClump, leafPlant, riceTuft, shortGrass, vergeClump } from "./vegetation";
 import { roadMaterial, uber, waterMaterial } from "../render/materials";
@@ -48,6 +50,7 @@ interface HouseSpot {
   seed: number;
   /** Yaw relative to the road: 0 = front faces the approaching rider, negative turns it roadward. */
   tilt?: number;
+  kind?: ShopKind;
 }
 
 /**
@@ -59,6 +62,10 @@ const HOUSES: HouseSpot[] = [
   { z: -53, w: 6.6, d: 6.0, floors: 2, shop: true, u: 6.4, ac: true, balcony: false, seed: 23, tilt: -0.45 },
   { z: -67, w: 7.6, d: 6.6, floors: 2, u: 8.2, seed: 37, tilt: -0.15 },
   { z: -82, w: 6.8, d: 6.0, floors: 1, u: 7.4, ac: true, seed: 41, tilt: -0.3 },
+  // Countryside shop row: dagashi sweet shop, a shuttered old shop, a little soba/ramen place.
+  { z: -104, w: 5.6, d: 5.2, floors: 1, u: 6.3, seed: 83, tilt: -0.35, kind: "dagashi" },
+  { z: -113, w: 5.2, d: 5.0, floors: 2, u: 6.5, seed: 89, tilt: -0.3, kind: "closed", balcony: false, ac: true },
+  { z: -122.5, w: 6.0, d: 5.6, floors: 1, u: 6.4, seed: 97, tilt: -0.3, kind: "ramen", ac: true },
   { z: -228, w: 8.2, d: 7.0, floors: 2, u: 8.6, ac: true, seed: 53, tilt: -0.2 },
   { z: -244, w: 6.0, d: 5.4, floors: 1, u: 7.8, seed: 67, tilt: -0.35 },
   { z: -505, w: 7.4, d: 6.6, floors: 2, u: 8.4, seed: 79, ac: true, tilt: -0.25 },
@@ -80,7 +87,7 @@ const FENCES_LEFT: [number, number][] = [
 ];
 
 const GUARDRAIL_RIGHT: [number, number][] = [
-  [-160, -198],
+  [-156, -180],
   [-452, -486],
 ];
 
@@ -93,8 +100,15 @@ const villageLot = (u: number, z: number) => {
   for (const h of HOUSES) if (z < h.z + h.d / 2 + 4.5 && z > h.z - h.d / 2 - 1 && u > 3.5 && u < h.u + h.w + 1) return true;
   return false;
 };
+/** Street-furniture lots (shop row pavement, shrine grounds, hamlet yard): kept clear of plants. */
+const STREET_CLEAR: { z0: number; z1: number; u0: number; u1: number }[] = [
+  { z0: -96, z1: -140, u0: 3.0, u1: 6.2 },
+  { z0: -184, z1: -209, u0: 3.0, u1: 14.5 },
+  { z0: -230, z1: -253, u0: 3.0, u1: 6.4 },
+];
 const inHouse = (u: number, z: number, pad = 0.8) => {
   for (const h of HOUSES) if (Math.abs(z - h.z) < h.d / 2 + pad + 1.4 && u > h.u - pad - 0.8 && u < h.u + h.w + pad) return true;
+  for (const c of STREET_CLEAR) if (z < c.z0 && z > c.z1 && u > c.u0 && u < c.u1 + pad * 0.5) return true;
   return false;
 };
 
@@ -516,7 +530,7 @@ export function buildChunk(k: number): Chunk {
   // ---- houses (right)
   for (const h of HOUSES) {
     if (!inRange(h.z)) continue;
-    const g = house({ w: h.w, d: h.d, floors: h.floors, shop: h.shop, seed: h.seed, ac: h.ac, balcony: h.balcony });
+    const g = house({ w: h.w, d: h.d, floors: h.floors, shop: h.shop, seed: h.seed, ac: h.ac, balcony: h.balcony, kind: h.kind });
     houseG.push(placeAt(g, h.u + h.w / 2, h.z, roadYaw(h.z) + (h.tilt ?? -0.25), groundH(h.u + 1, h.z) + 0.02));
     colliders.push({ x: roadX(h.z) + h.u + h.w / 2, z: h.z, r: Math.max(h.w, h.d) * 0.55 });
   }
@@ -540,6 +554,59 @@ export function buildChunk(k: number): Chunk {
     const ep = pole(8.2, true);
     obstacle(ep.geo, -2.65, -380, roadYaw(-380), 0.26);
   }
+
+  // ---- street furniture (right side): shop row, shrine grounds, hamlet yard
+  const addTreeLater: [TreeKind, number, number, number][] = [];
+  /** Place `g` at road-relative (u, z) with yaw ry; `solid` = collider circles in local (x, z, r). */
+  const put = (g: Geo, u: number, z: number, ry: number, solid: [number, number, number][] = []) => {
+    if (!inRange(z)) return;
+    infraG.push(placeAt(g, u, z, ry, groundH(u, z)));
+    const c = Math.cos(ry), sn = Math.sin(ry);
+    for (const [lx, lz, rad] of solid) colliders.push({ x: roadX(z) + u + lx * c + lz * sn, z: z - lx * sn + lz * c, r: rad });
+  };
+  const toRoad = faceRoadFromRight;
+  // Shop row (z -96..-140): canal with bridge plates, bikes, vending machines, phone box, bus stop.
+  if (z0 > -140 && z1 < -96) {
+    const len = 36, cz = -97;
+    const canal = drainCanal(len, Math.round(len / 2));
+    canal.translate(3.55, 0, cz);
+    infraG.push(shear(canal));
+    for (const pz of [-100.8, -110.4, -119.6]) put(bridgePlate(), 3.55, pz, roadYaw(pz));
+  }
+  put(parkedBike("#3a7ac8"), 4.35, -102.3, toRoad(-102.3), [[0, 0.3, 0.3], [0, -0.3, 0.3]]);
+  put(parkedBike("#d8d4c8"), 4.45, -103.2, toRoad(-103.2) + 0.15, [[0, 0.3, 0.3], [0, -0.3, 0.3]]);
+  put(vendingMachine("vendDrink"), 4.6, -108.4, toRoad(-108.4), [[0, 0, 0.55]]);
+  put(vendingMachine("vendIce"), 4.6, -109.45, toRoad(-109.45), [[0, 0, 0.55]]);
+  put(phoneBox(), 4.55, -117.2, toRoad(-117.2), [[0, 0, 0.6]]);
+  put(potRow(301, 4), 4.2, -121.8, toRoad(-121.8));
+  put(busStop(), 4.95, -137.6, toRoad(-137.6), [[-0.8, -0.1, 0.6], [0.4, -0.1, 0.6], [1.1, -0.1, 0.5], [-1.8, 1.05, 0.3]]);
+  // Shrine grounds (z -184..-209): stop sign, mirror at the bend, jizo, lanterns, torii + steps.
+  put(tomareSign(), 3.35, -186, roadYaw(-186) - 0.2, [[0, 0, 0.2]]);
+  put(convexMirror(), 3.3, -191, roadYaw(-191) + 0.5, [[0, 0, 0.2]]);
+  for (let i = 0; i < 3; i++) put(jizo(400 + i), 4.25, -193.6 - i * 0.62, toRoad(-194), [[0, 0, 0.3]]);
+  for (const lz of [-197.3, -202.7]) put(stoneLantern(), 4.9, lz, toRoad(lz), [[0, 0, 0.32]]);
+  {
+    const sh = shrine();
+    const solid: [number, number, number][] = [[-1.3, 0, 0.27], [1.3, 0, 0.27]];
+    for (let d = 1.2; d < sh.depth; d += 0.8) for (const x of [-0.55, 0.55]) solid.push([x, -d, 0.55]);
+    put(sh.geo, 5.6, -200, toRoad(-200), solid);
+    if (inRange(-200)) {
+      const sr = mulberry32(777);
+      for (const [tu, tz, k] of [[9.5, -195.5, "cedar"], [10.5, -204.8, "cedar"], [13.8, -196.8, "round"], [14.5, -203.5, "tall"], [16.5, -200.5, "cedar"], [12, -208, "round"]] as [number, number, TreeKind][])
+        addTreeLater.push([k, tu, tz, range(sr, 0.9, 1.2)]);
+    }
+  }
+  // Hamlet yard (z -223..-253): vegetable stand, vending machine, kei truck, laundry, bike, mirror.
+  put(vegStand(501), 4.8, -235.5, toRoad(-235.5), [[-0.45, 0, 0.45], [0.45, 0, 0.45]]);
+  put(vendingMachine("vendDrink"), 4.6, -231.4, toRoad(-231.4), [[0, 0, 0.55]]);
+  put(keiTruck(), 5.35, -250.6, roadYaw(-250.6), [[0, 1.1, 0.75], [0, 0, 0.75], [0, -1.1, 0.75]]);
+  put(laundryPole(503), 11.5, -222.3, roadYaw(-222.3) - 0.3, [[-1.3, 0, 0.2], [1.3, 0, 0.2]]);
+  put(parkedBike("#c84a3a"), 7.2, -240.4, roadYaw(-240.4) + 1.2, [[0, 0.3, 0.3], [0, -0.3, 0.3]]);
+  put(potRow(505, 5), 5.4, -242.2, toRoad(-242.2));
+  put(convexMirror(), 3.3, -246.6, roadYaw(-246.6) + 0.5, [[0, 0, 0.2]]);
+  // Opening village: laundry behind the far house, a bicycle parked at the shop.
+  put(laundryPole(507), 13.5, -62.6, roadYaw(-62.6) - 0.4, [[-1.3, 0, 0.2], [1.3, 0, 0.2]]);
+  put(parkedBike("#e8e0cc"), 5.25, -50.9, toRoad(-50.9) + 0.35, [[0, 0.3, 0.3], [0, -0.3, 0.3]]);
 
   // ---- poles + wires
   const nPoles = L / POLE_SPACING;
@@ -623,6 +690,7 @@ export function buildChunk(k: number): Chunk {
     pushInst(bucket[key], roadX(z) + u, groundH(u, z) - 0.1, z, rng() * 6.28, s, s * range(rng, 0.9, 1.1), hsl(col("#ffffff"), rng, 0.015, 0.05, 0.05));
     if (Math.abs(u) < 46) colliders.push({ x: roadX(z) + u, z, r: 0.5 * s });
   };
+  for (const [k, tu, tz, ts] of addTreeLater) addTree(k, tu, tz, ts);
   // Village backdrop: a big dark tree mass behind the houses (as in the reference).
   for (const h of HOUSES) {
     if (!inRange(h.z)) continue;

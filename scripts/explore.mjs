@@ -231,6 +231,19 @@ try {
       minD = Math.min(minD, Math.hypot(s.u - 3.95, s.z + 12));
     }
     ok("pole blocks walker", minD > 0.45, `closest approach to pole centre ${minD.toFixed(2)} m (collider 0.30 + body 0.24)`);
+    // Street furniture: walk straight at the vending machine (u 4.6, z -108.4) and the phone box.
+    for (const [name, u, z, r] of [["vending machine", 4.6, -108.4, 0.55], ["phone box", 4.55, -117.2, 0.6]]) {
+      await R(() => window.__ride.explore.walk(0, 0));
+      await R(([u, z]) => window.__ride.explore.teleport(u, z + 4.2, 0), [u, z]);
+      await R(() => window.__ride.explore.walk(0, -1, false));
+      let md = 1e9;
+      for (let i = 0; i < 40; i++) {
+        await wait(100);
+        const s = await state();
+        md = Math.min(md, Math.hypot(s.u - u, s.z - z));
+      }
+      ok(`${name} blocks walker`, md > r + 0.1, `closest approach ${md.toFixed(2)} m (collider ${r} + body 0.24)`);
+    }
     await R(() => window.__ride.explore.walk(0, 0));
   }
 

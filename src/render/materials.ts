@@ -36,6 +36,8 @@ export const G = {
   uNoFringe: { value: 0 },
   /** Painted leaf atlas (see leafAtlas.ts); assigned once the renderer exists. */
   uLeafTex: { value: null as THREE.Texture | null },
+  /** Street signage atlas (see signAtlas.ts). */
+  uSignTex: { value: null as THREE.Texture | null },
   /** Grass parting around her feet when she walks: (x, z, radius, strength). */
   uPush: { value: new THREE.Vector4(0, 0, 0.8, 0) },
 };
@@ -54,6 +56,7 @@ uniform vec3 uRimColor;
 uniform vec2 uWindDir;
 uniform float uNoFringe;
 uniform sampler2D uLeafTex;
+uniform sampler2D uSignTex;
 uniform vec4 uPush;
 uniform sampler2D uShadowMap;
 uniform mat4 uShadowMat;
@@ -494,6 +497,19 @@ void main(){
   } else if (mt == 13) {    // stone
     base *= 0.8 + 0.35 * vnoise(vWPos.xz * 4.0 + vWPos.y * 3.0);
     paint = 1.4;
+  } else if (mt == 23 || mt == 24) { // painted signage from the atlas; 24 = lit (vending, phone)
+    vec4 sg = texture(uSignTex, vUv);
+    if (sg.a < 0.5) discard;
+    base = sg.rgb * vCol;
+    paint = 0.12; rim = 0.3; soft = 0.05;
+    if (mt == 24) emis = base * 0.28;
+  } else if (mt == 25) {    // plaster: rain streaks under the eaves, grime toward the ground
+    vec2 tg = normalize(vec2(-N.z, N.x) + 1e-4);
+    float sx = dot(vWPos.xz, tg);
+    float st = vnoise(vec2(sx * 7.0, vWPos.y * 0.35)) * vnoise(vec2(sx * 2.3 + 4.0, 1.0));
+    base *= 1.0 - 0.16 * smoothstep(0.3, 0.6, st) * aaKeep(sx * 7.0);
+    base *= mix(0.84, 1.0, smoothstep(0.2, 1.4, vObj.y));
+    paint = 0.7;
   } else if (mt == 14) {    // paper lantern (soft, never a lamp in daylight)
     emis = base * 0.18;
     paint = 0.3;

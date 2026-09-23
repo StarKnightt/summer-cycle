@@ -98,9 +98,10 @@
       .lines { position: relative; height: 26px; margin-top: calc(30px * var(--s) / 0.8); width: 560px; text-align: center; }
       .lines span {
         position: absolute; inset: 0; font-style: italic; font-size: calc(11px + 6px * var(--s)); letter-spacing: 0.08em; color: #6f685d;
-        transition: opacity 0.7s ease, transform 0.7s ease; opacity: 0; transform: translateY(4px);
+        transition: opacity 0.3s ease-in, transform 0.3s ease-in; opacity: 0; transform: translateY(-4px);
       }
-      .lines span.on { opacity: 1; transform: none; }
+      /* The outgoing line is gone before the next one rises in: they never overlap. */
+      .lines span.on { opacity: 1; transform: none; transition: opacity 0.6s ease-out 0.32s, transform 0.6s ease-out 0.32s; }
       .lines span.prompt { color: #3d4650; letter-spacing: 0.16em; font-size: calc(11px + 8px * var(--s)); }
       .lines span.prompt.on { animation: breathe 2.6s ease-in-out infinite; }
       @keyframes breathe { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
@@ -137,8 +138,10 @@
         37% { transform: translate(79vw, 21vh); } 50% { transform: translate(83vw, 26vh); } 62% { transform: translate(78vw, 33vh); }
         75% { transform: translate(72vw, 27vh); } 87% { transform: translate(67vw, 34vh); } 100% { transform: translate(64vw, 30vh); }
       }
+      .bouquet { transform-origin: 200px 70px; animation: bouquet 1.7s ease-in-out infinite alternate; }
+      @keyframes bouquet { from { transform: rotate(-4deg); } to { transform: rotate(3deg); } }
       @media (prefers-reduced-motion: reduce) {
-        .mote, .petal, .fly, .bob, .tail, .lines span.prompt.on { animation: none !important; }
+        .mote, .petal, .fly, .bob, .tail, .bouquet, .lines span.prompt.on { animation: none !important; }
         .mote, .petal, .fly { display: none; }
         .wheel, .crank, .thigh, .shin { animation-duration: 2.2s; }
       }
@@ -304,10 +307,19 @@
                 <path d="M58 125.5 L112 123.5 A7.2 7.2 0 0 1 112 138 L58 136 Z" fill="#c2c3be" stroke="#2e2a33" stroke-width="1.3" opacity="0.92" />
                 <path d="M143 66.5 L152 67.5 L152 71.5 L143 71 Z" fill="#3a3540" />
                 <path d="M84 76 C88 72.5 104 72.5 108 76 C104 80 88 80 84 76 Z" fill="#5a3b2c" stroke="#2e2a33" stroke-width="1.2" />
-                <!-- basket with leeks -->
-                <path d="M186 70 L195 36 M189 70 L201 38" stroke="#6f9a4d" stroke-width="3.2" stroke-linecap="round" />
-                <path d="M186 70 L195 36 M189 70 L201 38" stroke="#2e2a33" stroke-width="0.9" stroke-linecap="round" opacity="0.6" fill="none" />
-                <path d="M190 70 L193 52 M193 70 L198 55" stroke="#f3f0e2" stroke-width="3.4" stroke-linecap="round" />
+                <!-- basket: a leek and a little bouquet in paper -->
+                <path d="M184 70 L190 38" stroke="#6f9a4d" stroke-width="3.2" stroke-linecap="round" />
+                <path d="M184 70 L190 38" stroke="#2e2a33" stroke-width="0.9" stroke-linecap="round" opacity="0.6" fill="none" />
+                <path d="M186 70 L189 53" stroke="#f3f0e2" stroke-width="3.4" stroke-linecap="round" />
+                <g class="bouquet">
+                  <path d="M198 54 L196 42 M200 53 L201 37 M202 54 L206 43 M199 54 L193 47 M203 54 L209 48" stroke="#4f7a34" stroke-width="1.1" stroke-linecap="round" fill="none" />
+                  <g fill="#fbfaf4"><circle cx="192.5" cy="46.5" r="1.3" /><circle cx="194.5" cy="44" r="1.1" /><circle cx="209.5" cy="47" r="1.3" /><circle cx="207.8" cy="44.6" r="1" /><circle cx="197" cy="39.5" r="1" /></g>
+                  <g transform="translate(201 35)"><circle r="5.2" fill="#f2c230" stroke="#2e2a33" stroke-width="0.9" stroke-dasharray="2.2 1.1" /><circle r="2.3" fill="#5a3a1a" /></g>
+                  <g transform="translate(195.5 41.5)"><circle r="3.6" fill="#f2a0c0" stroke="#2e2a33" stroke-width="0.8" stroke-dasharray="2 0.9" /><circle r="1.1" fill="#f2c230" /></g>
+                  <g transform="translate(206.5 41)"><circle r="3.3" fill="#fbf6f0" stroke="#2e2a33" stroke-width="0.8" stroke-dasharray="2 0.9" /><circle r="1" fill="#f2c230" /></g>
+                  <path d="M193 70 L197.5 52.5 L207 51.5 L201.5 70 Z" fill="#d9c7a0" stroke="#2e2a33" stroke-width="1" stroke-linejoin="round" />
+                  <path d="M195.8 59 L204.6 58.4" stroke="#c8342c" stroke-width="1.8" />
+                </g>
                 <path d="M172 68 L208 68 L204 94 L176 94 Z" fill="#9a7550" stroke="#2e2a33" stroke-width="1.5" stroke-linejoin="round" />
                 <path d="M173.5 76 H206.8 M175 84 H205.5 M181 68 L182 94 M190 68 V94 M199 68 L198 94" stroke="#6b4e33" stroke-width="1" />
                 <path d="M170 98 L176 94" stroke="#2e2a33" stroke-width="1.6" />

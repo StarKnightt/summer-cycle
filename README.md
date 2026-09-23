@@ -57,4 +57,5 @@ Audio starts on the first click or key press (browser autoplay rules).
 - `node scripts/explore.mjs --url=<server>` checks on-foot mode and the cinematic cameras
   (screenshots, collision / remount / streaming tests, FPS); `scripts/fps-ab.mjs <urlA> <urlB>`
   compares steady chase-cam FPS between two builds.
+- `node scripts/birds-shots.mjs --url=<server>` frames the flocks, swallows and the perched birds scattering.
 - `audio-lab.html` is a dev-only sound playground (served by `pnpm dev`, not part of the build).
