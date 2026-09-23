@@ -232,6 +232,7 @@ function frame(now: number) {
   birds.activity = tod.birds;
   birds.update(dt, t, chase.cam, _actor.set(px, 0, pz));
   fireflies.update(pz, tod.night);
+  rider.bike.setLamp(tod.night);
   if (audio.state === "running") {
     near = world.closeness(px, pz);
     const u = px - roadX(pz);

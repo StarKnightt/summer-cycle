@@ -65,10 +65,10 @@ try {
   }
   if (want("lamp")) {
     await view([-0.75, 0.62, -1.3], [-0.05, 0.62, -0.5]);
-    await page.evaluate(() => window.__ride.bike.setLamp(1));
+    await page.evaluate(() => window.__ride.setTime("dusk", true));
     await page.waitForTimeout(700);
     await shot("lamp_on");
-    await page.evaluate(() => window.__ride.bike.setLamp(0));
+    await page.evaluate(() => window.__ride.setTime("afternoon", true));
   }
   if (want("rear")) {
     await view([-0.9, 1.05, 1.95], [0, 0.6, 0.15]);
@@ -102,10 +102,10 @@ try {
     await page.evaluate(() => window.__ride.bike.ringBell());
     await page.waitForTimeout(60);
     await shot("fpp");
-    await page.evaluate(() => window.__ride.bike.setLamp(1));
-    await page.waitForTimeout(300);
+    await page.evaluate(() => window.__ride.setTime("dusk", true));
+    await page.waitForTimeout(500);
     await shot("fpp_lamp");
-    await page.evaluate(() => window.__ride.bike.setLamp(0));
+    await page.evaluate(() => window.__ride.setTime("afternoon", true));
   }
   if (want("chase")) {
     await page.evaluate(() => {
