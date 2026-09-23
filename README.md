@@ -29,6 +29,11 @@ The build uses a relative base (`./`), so `dist/` can be dropped onto any static
 | T | Time of day: afternoon → golden hour → sunset → dusk → afternoon (smooth ~3.6 s transition) |
 | B | Ring the bell |
 | M | Mute / unmute |
+| Mouse | Look around: orbit the chase camera around her (±150°), or turn her head in first person (±100°, ±45° up/down); eases back after ~1.5 s idle. Cinematic C shots ignore it |
+
+The click that dismisses the loader captures the mouse (if you started with a key, click the
+scene once). Esc releases it; click the scene to capture it again. Autoplay never captures the
+mouse and keeps its scripted camera.
 
 On foot:
 
@@ -36,7 +41,7 @@ On foot:
 | --- | --- |
 | W A S D / arrows | Walk, relative to the camera |
 | Shift (hold) | Jog |
-| Mouse drag | Orbit the camera around her (click to capture the mouse, Esc releases) |
+| Mouse (or drag) | Orbit the camera around her |
 | Mouse wheel | Zoom in / out |
 | F | Get back on the bike when she's within ~2 m of it (a small "F — ride" hint appears) |
 

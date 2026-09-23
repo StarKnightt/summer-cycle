@@ -35,7 +35,7 @@ export class Loader {
   private stage: Stage | null = null;
   private lastSwap = 0;
   private pendingText: string | null = null;
-  private go: (() => void) | null = null;
+  private go: ((viaPointer: boolean) => void) | null = null;
   private readonly reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   constructor(skip: boolean) {
@@ -61,9 +61,9 @@ export class Loader {
   }
 
   /** Built: show the prompt; `go` runs inside the first click/key (so it may start audio). */
-  ready(go: () => void): void {
+  ready(go: (viaPointer: boolean) => void): void {
     this.progress = 1;
-    if (!this.el) return go();
+    if (!this.el) return go(false);
     this.el.style.setProperty("--p", "1");
     this.go = go;
     this.el.classList.add("go");
@@ -71,7 +71,7 @@ export class Loader {
     this.show("click or press any key to ride", true);
     const hint = this.el.querySelector<HTMLElement>(".hint");
     const auto = new URLSearchParams(location.search).has("autoplay");
-    if (hint && !auto) hint.innerHTML = "<b>W</b> pedal &nbsp;·&nbsp; <b>A D</b> steer &nbsp;·&nbsp; <b>S</b> brake &nbsp;·&nbsp; <b>V</b> view &nbsp;·&nbsp; <b>B</b> bell";
+    if (hint && !auto) hint.innerHTML = "<b>W</b> pedal &nbsp;·&nbsp; <b>A D</b> steer &nbsp;·&nbsp; <b>S</b> brake &nbsp;·&nbsp; <b>V</b> view &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>B</b> bell";
   }
 
   /** Watercolour dissolve: holes bloom outward from the middle through the paper, pigment pooling at the edges. */
@@ -175,11 +175,11 @@ export class Loader {
     this.lastSwap = performance.now();
   }
 
-  private trigger(): void {
+  private trigger(viaPointer: boolean): void {
     const go = this.go;
     if (!go) return;
     this.go = null;
-    go();
+    go(viaPointer);
   }
 
   private readonly swallow = (e: Event) => e.stopImmediatePropagation();
@@ -188,12 +188,12 @@ export class Loader {
     e.stopImmediatePropagation();
     if (e.ctrlKey || e.metaKey || e.altKey || e.key === "Tab" || e.key === "F5" || e.key === "F11" || e.key === "F12") return;
     e.preventDefault();
-    if (!e.repeat) this.trigger();
+    if (!e.repeat) this.trigger(false);
   };
 
   private readonly onPointer = (e: PointerEvent) => {
     e.stopImmediatePropagation();
-    if (e.button === 0) this.trigger();
+    if (e.button === 0) this.trigger(true);
   };
 
   private readonly onResize = () => {

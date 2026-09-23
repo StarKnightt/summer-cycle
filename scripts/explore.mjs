@@ -62,6 +62,11 @@ try {
   const s0 = await R(() => window.__ride.stats());
   console.log(`[gpu] ${s0.renderer}`);
   await wait(2500);
+  {
+    // Autoplay keeps its scripted camera: the start click must not capture the mouse or enable look.
+    const lk = await R(() => window.__ride.look);
+    ok("autoplay ignores mouse look", !lk.enabled && !lk.locked, JSON.stringify(lk));
+  }
 
   if (ONLY.includes("fps")) {
     // Steady-state FPS, no screenshots: chase ride, front cinematic, then walking on foot.
@@ -82,6 +87,74 @@ try {
     const c = await avgOf(12);
     ok("fps walking", c.avg >= 90, `avg ${c.avg.toFixed(1)} min ${c.min} [${c.l.join(",")}]`);
     await R(() => window.__ride.explore.walk(0, 0));
+  }
+
+  if (want("mouse")) {
+    // Mouse look while riding: chase orbit, pitch clamp, idle ease-back; FPP head turn; C cams ignore it.
+    await R(() => window.__ride.setCam("tpp"));
+    await wait(1500);
+    await R(() => window.__ride.mouseLook(300, 0));
+    await wait(400);
+    let lk = await R(() => window.__ride.look);
+    await shot("mouse_chase_orbit_right");
+    ok("mouse orbits chase cam", lk.yaw < -1.1, `yaw=${lk.yaw.toFixed(2)}`);
+    await R(() => window.__ride.mouseLook(-900, 0));
+    await wait(400);
+    lk = await R(() => window.__ride.look);
+    await shot("mouse_chase_orbit_front");
+    ok("chase yaw clamped to ±150°", Math.abs(lk.yaw) <= 2.62 + 1e-3 && lk.yaw > 2.3, `yaw=${lk.yaw.toFixed(2)}`);
+    await R(() => window.__ride.mouseLook(0, 900));
+    await wait(400);
+    lk = await R(() => window.__ride.look);
+    await shot("mouse_chase_pitch_top");
+    ok("chase pitch clamped", lk.pitch <= 0.96 - 0.07 + 1e-3, `pitch=${lk.pitch.toFixed(2)}`);
+    await wait(4500);
+    lk = await R(() => window.__ride.look);
+    ok("chase eases back behind her when idle", Math.abs(lk.yaw) < 0.25 && Math.abs(lk.pitch) < 0.15, `yaw=${lk.yaw.toFixed(2)} pitch=${lk.pitch.toFixed(2)}`);
+    await R(() => window.__ride.setCam("fpp"));
+    await wait(1500);
+    await R(() => window.__ride.mouseLook(-260, 0));
+    await wait(400);
+    lk = await R(() => window.__ride.look);
+    await shot("mouse_fpp_look_left");
+    ok("FPP head turn", lk.fppYaw > 0.8, `fppYaw=${lk.fppYaw.toFixed(2)}`);
+    await R(() => window.__ride.mouseLook(900, -900));
+    await wait(400);
+    lk = await R(() => window.__ride.look);
+    ok("FPP clamp ±100° / ±45°", Math.abs(lk.fppYaw) <= 1.746 && Math.abs(lk.fppPitch) <= 0.786, `fppYaw=${lk.fppYaw.toFixed(2)} fppPitch=${lk.fppPitch.toFixed(2)}`);
+    await wait(3500);
+    lk = await R(() => window.__ride.look);
+    ok("FPP recentres when idle", Math.abs(lk.fppYaw) < 0.2 && Math.abs(lk.fppPitch) < 0.15, `fppYaw=${lk.fppYaw.toFixed(2)}`);
+    await R(() => window.__ride.setCam("tpp"));
+    await wait(1200);
+    await R(() => window.__ride.cycleCam());
+    await wait(300);
+    await R(() => window.__ride.mouseLook(400, 200));
+    lk = await R(() => window.__ride.look);
+    ok("C cinematic ignores mouse", Math.abs(lk.yaw) < 0.1, `yaw=${lk.yaw.toFixed(2)}`);
+    await R(() => window.__ride.cycleCam());
+    await R(() => window.__ride.cycleCam());
+    await wait(2200);
+  }
+
+  if (ONLY.includes("lock")) {
+    // Real flow (no autoplay): the loader's "to ride" click captures the pointer; mouse moves orbit.
+    const p3 = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    p3.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
+    await p3.goto(URL, { waitUntil: "load" });
+    await p3.waitForFunction(() => window.__ride?.waiting === true, null, { timeout: 90_000 });
+    await p3.waitForTimeout(1500);
+    await p3.mouse.move(640, 360);
+    await p3.mouse.down();
+    await p3.mouse.up();
+    await p3.waitForTimeout(800);
+    let lk = await p3.evaluate(() => window.__ride.look);
+    ok("loader click captures pointer", lk.locked, JSON.stringify(lk));
+    for (let i = 0; i < 10; i++) await p3.mouse.move(640 + 30 * (i + 1), 360);
+    await p3.waitForTimeout(300);
+    lk = await p3.evaluate(() => window.__ride.look);
+    ok("locked mouse orbits while riding", Math.abs(lk.yaw) > 0.05, `yaw=${lk.yaw.toFixed(2)}`);
+    await p3.close();
   }
 
   if (ONLY.includes("fpp")) {

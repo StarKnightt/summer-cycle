@@ -132,6 +132,51 @@ const hud = document.getElementById("hud")!;
 if (AUTOPLAY || params.has("nohud")) hud.style.display = "none";
 // F = get off and explore on foot / get back on; C = cinematic ride cameras.
 const explore = new Explore(world, rider, ctl, chase, audio, renderer.domElement, !(AUTOPLAY || params.has("nohud")));
+// Mouse look: the "to ride" click captures the pointer; a canvas click re-captures it after Esc.
+// Autoplay keeps its scripted camera and never captures.
+chase.mouseLook = !AUTOPLAY;
+explore.lockRiding = !AUTOPLAY;
+const canvasEl = renderer.domElement;
+const lockPointer = () => {
+  try {
+    const p = canvasEl.requestPointerLock() as unknown as Promise<void> | undefined;
+    p?.catch?.(() => {});
+  } catch {
+    /* not allowed here */
+  }
+};
+addEventListener("pointermove", (e) => {
+  if (document.pointerLockElement === canvasEl && !explore.onFoot) chase.lookBy(e.movementX, e.movementY);
+});
+const lookHint = document.createElement("div");
+lookHint.textContent = "click to look around";
+Object.assign(lookHint.style, {
+  position: "fixed",
+  left: "50%",
+  bottom: "3.5%",
+  transform: "translateX(-50%)",
+  font: '400 12px/1 "Georgia", "Times New Roman", serif',
+  letterSpacing: "0.2em",
+  color: "rgba(255, 252, 240, 0.7)",
+  textShadow: "0 1px 3px rgba(40, 30, 20, 0.45)",
+  pointerEvents: "none",
+  userSelect: "none",
+  opacity: "0",
+  transition: "opacity 0.8s ease",
+  display: AUTOPLAY || params.has("nohud") ? "none" : "block",
+});
+document.body.appendChild(lookHint);
+let lookHintTimer = 0;
+const showLookHint = () => {
+  if (AUTOPLAY || explore.onFoot) return;
+  lookHint.style.opacity = "1";
+  clearTimeout(lookHintTimer);
+  lookHintTimer = window.setTimeout(() => (lookHint.style.opacity = "0"), 2000);
+};
+document.addEventListener("pointerlockchange", () => {
+  if (document.pointerLockElement === canvasEl) lookHint.style.opacity = "0";
+  else showLookHint();
+});
 
 addEventListener("resize", () => {
   renderer.setSize(innerWidth, innerHeight);
@@ -289,8 +334,12 @@ function frame(now: number) {
       // The gesture that dismisses the loader also starts the audio (autoplay policy).
       fadeEl.style.display = "none";
       waiting = true;
-      loader.ready(() => {
+      loader.ready((viaPointer) => {
         audio.start();
+        if (!AUTOPLAY) {
+          if (viaPointer) lockPointer();
+          else showLookHint();
+        }
         waiting = false;
         last = performance.now();
         loader.dissolve();
@@ -352,6 +401,14 @@ window.__ride = {
   },
   toggleView() {
     chase.toggle();
+  },
+  /** Test hook: feed locked-mouse deltas (enables mouse look even under autoplay). */
+  mouseLook(mx: number, my: number) {
+    chase.mouseLook = true;
+    chase.lookBy(mx, my);
+  },
+  get look() {
+    return { enabled: chase.mouseLook, ...chase.lookState, locked: document.pointerLockElement === canvasEl };
   },
   /** Exact framing for captures: eye and target as world offsets from the rider (ground level). */
   view(px: number, py: number, pz: number, lx: number, ly: number, lz: number) {

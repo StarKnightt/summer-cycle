@@ -219,7 +219,7 @@ export class Explore {
       if ((mx || my) && this.onFoot) this.orbitBy(mx, my);
     });
     addEventListener("pointerup", () => {
-      if (this.dragging && this.dragMoved < 5 && performance.now() - this.dragT < 350 && this.onFoot && document.pointerLockElement !== canvas) {
+      if (this.dragging && this.dragMoved < 5 && performance.now() - this.dragT < 350 && (this.onFoot || this.lockRiding) && document.pointerLockElement !== canvas) {
         // A plain click captures the mouse for free look (Esc releases it).
         try {
           const p = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
@@ -240,6 +240,9 @@ export class Explore {
       { passive: true },
     );
   }
+
+  /** Also capture the mouse on a canvas click while riding (off for autoplay captures). */
+  lockRiding = false;
 
   /** Is she off the bike (the body lives on the walker root and the orbit camera is in charge)? */
   get onFoot(): boolean {
@@ -367,7 +370,7 @@ export class Explore {
     c.steer = 0;
     c.lean = 0;
     this.speed = 0;
-    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+    if (!this.lockRiding && document.pointerLockElement === this.canvas) document.exitPointerLock();
     this.chase.handoff(this.prevCam);
   }
 

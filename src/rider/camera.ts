@@ -24,6 +24,14 @@ const RIG = {
   flank: { az: -Math.PI * 1.5 + 0.12, r: 2.75, y: 1.34, look: [0.3, 0, 1.18], fov: 40 },
 } as const;
 const BLEND_T = 1.8;
+/** Mouse look limits: chase orbit bearing, camera elevation (same clamp as the on-foot orbit), first-person head turn. */
+const LOOK_YAW = (150 * Math.PI) / 180;
+const PITCH_MIN = -0.17, PITCH_MAX = 0.96;
+const FPP_YAW = (100 * Math.PI) / 180, FPP_PITCH = Math.PI / 4;
+/** Seconds without mouse input before the view eases back behind her / straight ahead. */
+const LOOK_IDLE = 1.5;
+const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
+const _Y = new THREE.Vector3(0, 1, 0), _X = new THREE.Vector3(1, 0, 0);
 
 interface Polar {
   az: number;
@@ -61,6 +69,17 @@ export class ChaseCam {
   /** Mode to swing to once the first-person blend has fully backed out. */
   private pending: CamMode | null = null;
   private fov = TPP_FOV;
+  /** Mouse look is off for scripted autoplay captures. */
+  mouseLook = true;
+  private lYaw = 0;
+  private lPitch = 0;
+  private lYawS = 0;
+  private lPitchS = 0;
+  private fYaw = 0;
+  private fPitch = 0;
+  private fYawS = 0;
+  private fPitchS = 0;
+  private lookIdle = 1e9;
 
   constructor(aspect: number) {
     this.cam = new THREE.PerspectiveCamera(TPP_FOV, aspect, TPP_NEAR, 4200);
@@ -106,6 +125,28 @@ export class ChaseCam {
     this.pending = null;
     rider.setFirstPerson(false);
     rider.setSkirtHidden(false);
+  }
+
+  /**
+   * Locked-mouse deltas (px). Chase: orbit around her; first person: turn the head. Cinematic
+   * shots ignore the mouse.
+   */
+  lookBy(mx: number, my: number): void {
+    if (!this.mouseLook || this.mode !== "chase" || this.tr) return;
+    this.lookIdle = 0;
+    if (this.fpp > 0.5) {
+      this.fYaw = clamp(this.fYaw - mx * 0.0035, -FPP_YAW, FPP_YAW);
+      this.fPitch = clamp(this.fPitch - my * 0.003, -FPP_PITCH, FPP_PITCH);
+    } else {
+      this.lYaw = clamp(this.lYaw - mx * 0.0045, -LOOK_YAW, LOOK_YAW);
+      // Elevation offset from the chase pose (~0.07 rad), kept inside the absolute clamp.
+      this.lPitch = clamp(this.lPitch + my * 0.0035, PITCH_MIN - 0.07, PITCH_MAX - 0.07);
+    }
+  }
+
+  /** Current mouse-look offsets (test hook). */
+  get lookState(): { yaw: number; pitch: number; fppYaw: number; fppPitch: number } {
+    return { yaw: this.lYawS, pitch: this.lPitchS, fppYaw: this.fYawS, fppPitch: this.fPitchS };
   }
 
   private swingTo(mode: CamMode): void {
@@ -291,8 +332,37 @@ export class ChaseCam {
       this.look.z = damp(this.look.z, tl.z, 6, dt);
     }
     this.fov = fov;
+    // Mouse look: ease back after a quiet spell (chase only while moving, so she can stop and look).
+    this.lookIdle += dt;
+    const chaseLook = this.mode === "chase" && !this.tr;
+    if (!chaseLook || (this.lookIdle > LOOK_IDLE && Math.abs(c.speed) > 0.5)) {
+      this.lYaw = damp(this.lYaw, 0, 1.4, dt);
+      this.lPitch = damp(this.lPitch, 0, 1.4, dt);
+    }
+    if (!chaseLook || this.lookIdle > LOOK_IDLE || this.fpp < 0.5) {
+      this.fYaw = damp(this.fYaw, 0, 2.2, dt);
+      this.fPitch = damp(this.fPitch, 0, 2.2, dt);
+    }
+    this.lYawS = damp(this.lYawS, this.lYaw, 14, dt);
+    this.lPitchS = damp(this.lPitchS, this.lPitch, 14, dt);
+    this.fYawS = damp(this.fYawS, this.fYaw, 14, dt);
+    this.fPitchS = damp(this.fPitchS, this.fPitch, 14, dt);
+    // Orbit the damped chase rig around a pivot at her chest (applied after the follow damping, so
+    // a fast flick swings around her rather than cutting through).
+    const pT = this.pos.clone(), lT = this.look.clone();
+    if (Math.abs(this.lYawS) > 1e-4 || Math.abs(this.lPitchS) > 1e-4) {
+      const pv = new THREE.Vector3(c.x, 1.2, c.z);
+      const o = pT.clone().sub(pv);
+      const r = o.length(), h = Math.max(Math.hypot(o.x, o.z), 1e-3);
+      const el = clamp(Math.atan2(o.y, h) + this.lPitchS, PITCH_MIN, PITCH_MAX);
+      o.set((o.x / h) * Math.cos(el) * r, Math.sin(el) * r, (o.z / h) * Math.cos(el) * r).applyAxisAngle(_Y, this.lYawS);
+      pT.copy(pv).add(o);
+      lT.sub(pv).applyAxisAngle(_Y, this.lYawS).add(pv);
+      // Looking down from above: aim nearer her so she stays in frame.
+      lT.lerp(pv, clamp(Math.abs(this.lPitchS) / 0.6, 0, 1) * 0.85);
+    }
     // TPP orientation.
-    this.m4.lookAt(this.pos, this.look, new THREE.Vector3(0, 1, 0));
+    this.m4.lookAt(pT, lT, new THREE.Vector3(0, 1, 0));
     this.qT.setFromRotationMatrix(this.m4);
     if (this.mode === "chase") this.qT.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -c.lean * 0.12));
 
@@ -315,8 +385,12 @@ export class ChaseCam {
     this.m4.lookAt(this.eye, fl, new THREE.Vector3(0, 1, 0));
     this.qF.setFromRotationMatrix(this.m4);
     this.qF.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), c.lean * 0.8 + Math.sin(c.crank) * 0.008 * c.pedaling));
+    if (this.fYawS || this.fPitchS) {
+      this.qF.premultiply(new THREE.Quaternion().setFromAxisAngle(_Y, this.fYawS));
+      this.qF.multiply(new THREE.Quaternion().setFromAxisAngle(_X, this.fPitchS));
+    }
 
-    this.cam.position.lerpVectors(this.pos, this.eye, e);
+    this.cam.position.lerpVectors(pT, this.eye, e);
     // Arc up over her head mid-blend rather than flying through her back.
     this.cam.position.y += Math.sin(Math.PI * e) * 0.45;
     this.cam.quaternion.slerpQuaternions(this.qT, this.qF, e);
