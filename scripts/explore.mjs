@@ -185,7 +185,7 @@ try {
     await page.waitForFunction(() => window.__ride.explore.state.mode === "ride", null, { timeout: 8000 });
     await wait(400);
     await shot("06_remount");
-    await wait(2500);
+    await page.waitForFunction(() => window.__ride.ctl.speed > 1, null, { timeout: 6000 }).catch(() => {});
     const c = await R(() => window.__ride.ctl);
     ok("remount rides on", c.speed > 1, `speed=${c.speed.toFixed(2)}`);
   }
