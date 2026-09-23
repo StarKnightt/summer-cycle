@@ -7,3 +7,6 @@ shots/critic-*/
 *.mp4
 *.webm
 .worktrees/
+# research scratch
+refs/web/
+scripts/_refgrab.mjs

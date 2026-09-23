@@ -1,8 +1,12 @@
-# Ghibli Ride
+# Summer Cycle
 
 A short cinematic bicycle ride through a late-summer Japanese countryside, rendered in Three.js
 with custom toon shaders, ink outlines and painterly post-processing. No score, no objectives,
 just ride. Everything (geometry, textures, audio) is generated procedurally in code.
+
+Live: <https://starknightt.github.io/summer-cycle/>
+(recording: [`?autoplay=1`](https://starknightt.github.io/summer-cycle/?autoplay=1),
+40 s sunset timelapse: [`?autoplay=1&timelapse=1`](https://starknightt.github.io/summer-cycle/?autoplay=1&timelapse=1)).
 
 ## Run
 
@@ -13,8 +17,8 @@ pnpm build      # type-check + production build into dist/
 pnpm preview    # serve dist/ on http://localhost:5420
 ```
 
-The build uses a relative base (`./`), so `dist/` can be dropped onto any static host
-(GitHub Pages, Vercel, Netlify, a plain folder) without configuration.
+The build uses a relative base (`./`), so `dist/` works from any sub-path without configuration.
+Pushing to `master` deploys to GitHub Pages via `.github/workflows/pages.yml`.
 
 ## Controls
 

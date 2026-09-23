@@ -1,9 +1,0 @@
-node_modules
-dist
-shots
-refs
-*.log
-*.mp4
-*.webm
-.env*
-.vercel

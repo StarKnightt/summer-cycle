@@ -1,4 +1,4 @@
-# Ghibli Ride — agent rules
+# Summer Cycle — agent rules
 
 Studio Ghibli / Makoto Shinkai style third-person cycling game. Vite + TypeScript + Three.js, pnpm only.
 
@@ -12,7 +12,7 @@ Studio Ghibli / Makoto Shinkai style third-person cycling game. Vite + TypeScrip
 - Everything stays inside `c:\Code\ghibli-ride`. Extra git worktrees go in `.worktrees/` (gitignored), never next to the project folder.
 - Close every dev/preview server and headless browser you start. The user wants no ports left open. Never kill servers you didn't start (e.g. port 5411 is another project).
 - No recorded videos left on disk; keep screenshot sets lean.
-- Hosting: GitHub Pages (repo StarKnightt/ghibli-ride). Do not deploy to Vercel.
+- Hosting: GitHub Pages (repo StarKnightt/summer-cycle, https://starknightt.github.io/summer-cycle/). Do not deploy to Vercel.
 
 ## Art and tech rules
 - Toon/cel shaders only via the material factory in `src/render/materials.ts`; no PBR, no downloaded assets (geometry, textures, audio all generated in code).

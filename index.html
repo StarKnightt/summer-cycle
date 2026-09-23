@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23f2c028'/%3E%3C/svg%3E" />
-    <title>Ghibli Ride — a summer afternoon on two wheels</title>
+    <title>Summer Cycle — a summer afternoon on two wheels</title>
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #f4ecd8; }
       canvas { display: block; }
@@ -38,9 +38,9 @@
       }
       .title { display: flex; align-items: flex-start; gap: 18px; color: #2f3944; transform: translateX(14px); }
       .title h1 {
-        margin: 0; font-weight: 400; font-size: calc(40px + 36px * var(--s)); letter-spacing: 0.32em; line-height: 1.1;
-        font-family: "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", "MS PMincho", "Noto Serif CJK JP", "Noto Serif JP", serif;
-        text-shadow: 0 0 1px rgba(47, 57, 68, 0.35); opacity: 0.9;
+        margin: 0; font-weight: 400; font-size: calc(34px + 30px * var(--s)); letter-spacing: 0.14em; line-height: 1.1;
+        font-family: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Yu Mincho", "Hiragino Mincho ProN", serif;
+        text-shadow: 0 0 1px rgba(47, 57, 68, 0.35); opacity: 0.9; white-space: nowrap;
       }
       .seal {
         margin-top: 10px; width: 25px; height: 25px; border-radius: 4px; background: #b9463c; color: #f7ecd9;
@@ -48,8 +48,14 @@
         font-family: "Yu Mincho", "Hiragino Mincho ProN", "MS PMincho", serif; transform: rotate(-4deg); opacity: 0.88;
       }
       .sub {
-        margin: 10px 0 0; font-style: italic; font-size: 16px; letter-spacing: 0.42em; color: #6d675d; text-indent: 0.42em;
+        margin: 12px 0 0; display: flex; align-items: center; gap: 14px; color: #6d675d;
       }
+      .sub .jp {
+        font-size: calc(13px + 5px * var(--s)); letter-spacing: 0.5em; text-indent: 0.5em;
+        font-family: "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "MS PMincho", "Noto Serif CJK JP", serif;
+      }
+      .sub .rule { width: 26px; height: 1px; background: rgba(109, 103, 93, 0.45); }
+      .sub .en { font-style: italic; font-size: 15px; letter-spacing: 0.36em; }
       .scene { position: relative; width: var(--track); height: calc(150px * var(--s)); margin-top: calc(44px * var(--s) / 0.8); }
       .guide { position: absolute; left: 0; right: 0; bottom: 6px; height: 1px;
         background: repeating-linear-gradient(90deg, rgba(120, 104, 80, 0.32) 0 7px, transparent 7px 13px); }
@@ -252,8 +258,8 @@
       <div class="fly"><i></i><i></i></div>
 
       <div id="stage">
-        <div class="title"><h1>夏の道</h1><div class="seal">夏</div></div>
-        <p class="sub">a summer road</p>
+        <div class="title"><h1>Summer Cycle</h1><div class="seal">夏</div></div>
+        <p class="sub"><span class="jp">夏の道</span><span class="rule"></span><span class="en">a summer road</span></p>
         <div class="scene">
           <div class="guide"></div>
           <div class="clip"><div>
