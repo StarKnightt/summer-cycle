@@ -21,6 +21,8 @@ export class SunShadow {
   readonly mat = shadowDepthMaterial();
   private readonly size: number;
   private readonly half: number;
+  /** Direction toward the light for the shadow camera; defaults to the shading sun `uSunDir`. */
+  dir: THREE.Vector3 | null = null;
   private bias = new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
 
   constructor(size = 2048, half = 55) {
@@ -41,7 +43,7 @@ export class SunShadow {
   }
 
   update(renderer: THREE.WebGLRenderer, scene: THREE.Scene, center: THREE.Vector3): void {
-    const sun = G.uSunDir.value;
+    const sun = this.dir ?? G.uSunDir.value;
     // Snap the centre to the texel grid in light space.
     const texel = (this.half * 2) / this.size;
     const lightRot = new THREE.Matrix4().lookAt(sun, new THREE.Vector3(), new THREE.Vector3(0, 1, 0));

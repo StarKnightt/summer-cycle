@@ -16,6 +16,8 @@ import { Loader, type Stage } from "./loader";
 import { precompile, warmDraws } from "./render/precompile";
 import { leafAtlas } from "./render/leafAtlas";
 import { signAtlas } from "./render/signAtlas";
+import { TimeOfDay, type Preset } from "./world/timeofday";
+import { Fireflies } from "./world/fireflies";
 
 const params = new URLSearchParams(location.search);
 const AUTOPLAY = params.has("autoplay") && params.get("autoplay") !== "0";
@@ -76,6 +78,8 @@ scene.add(rider.root);
 scene.add(rider.walker);
 const birds = new Birds();
 scene.add(birds.group);
+const fireflies = new Fireflies();
+scene.add(fireflies.mesh);
 
 const shadow = new SunShadow(2048, 55);
 const reflection = new PaddyReflection(Math.floor(innerWidth * 0.5), Math.floor(innerHeight * 0.5));
@@ -90,6 +94,8 @@ if (camParam === "fpp") {
 const post = new Post(renderer, innerWidth, innerHeight, { kuwahara: KUWA, msaa: Number(params.get("msaa") ?? 4) });
 const MSAA_PINNED = params.has("msaa");
 let msaaStepAt = 0;
+// T cycles afternoon → golden → sunset → dusk; ?time=… picks one, &timelapse=1 sets the sun over 40 s.
+const tod = new TimeOfDay(post, shadow, params);
 {
   const s = performance.now();
   let done = 0;
@@ -217,7 +223,10 @@ function frame(now: number) {
   if (onFoot) explore.updateCamera(dt, chase.cam);
   else chase.update(dt, ctl, t, rider);
   sky.follow(chase.cam.position);
+  tod.update(dt);
+  birds.activity = tod.birds;
   birds.update(dt, t, chase.cam, _actor.set(px, 0, pz));
+  fireflies.update(pz, tod.night);
   if (audio.state === "running") {
     near = world.closeness(px, pz);
     const u = px - roadX(pz);
@@ -231,7 +240,7 @@ function frame(now: number) {
       water,
       trees: near.trees,
       houses: near.houses,
-      evening: 0.65,
+      evening: tod.evening,
     });
   }
 
@@ -393,6 +402,12 @@ window.__ride = {
     lookAround(on: boolean) {
       explore.lookAround = on;
     },
+  },
+  get timeOfDay() {
+    return tod.preset;
+  },
+  setTime(p: Preset, instant = false) {
+    tod.set(p, instant);
   },
   get fppBlend() {
     return chase.fppBlend;

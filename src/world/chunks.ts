@@ -5,6 +5,7 @@ import { bridgePlate, busStop, convexMirror, drainCanal, jizo, keiTruck, laundry
 import type { ShopKind } from "./props";
 import { bambooGrove, farHouse, fence, house, pole, postBox, scarecrow, school, shed, stoneMarker, tree, warningSign, waterTower, type TreeKind } from "./props";
 import { boulder, butterfly, floretCluster, flower, flowerSpike, fringeGrass, grassClump, leafPlant, riceTuft, shortGrass, vergeClump } from "./vegetation";
+import { poleLamp } from "./lights";
 import { roadMaterial, uber, waterMaterial } from "../render/materials";
 import { LAYER_REFLECT, LAYER_SHADOW, onLayers } from "../render/lightpasses";
 import { mulberry32, pick, range, type Rng } from "../core/rng";
@@ -621,6 +622,7 @@ export function buildChunk(k: number): Chunk {
       return w.add(new THREE.Vector3(roadX(zz) + u, 0, zz));
     };
     infraG.push(placeAt(pr.geo, POLE_U, z, yaw));
+    infraG.push(placeAt(poleLamp(), POLE_U, z, yaw));
     colliders.push({ x: roadX(z) + POLE_U, z, r: 0.3 });
     const zn = z - POLE_SPACING;
     const yawN = roadYaw(zn);

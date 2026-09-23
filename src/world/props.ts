@@ -257,8 +257,8 @@ export function house(o: HouseOpts): Geo {
     out.push(xf(sign("sake", 0.34, 1.5), sx, base + 3.3, zf + 0.545));
     // Vending machine, bench, crates.
     out.push(xf(box(0.9, 1.8, 0.7, "#e2e0da", M.metal), -w / 2 - 0.6, 0.9, d / 2 - 0.5));
-    out.push(xf(box(0.72, 0.8, 0.06, "#c43a36", M.metal), -w / 2 - 0.6, 1.25, d / 2 - 0.13));
-    for (let i = 0; i < 3; i++) out.push(xf(box(0.16, 0.26, 0.06, ["#e7c44a", "#4a86c4", "#e25c4a"][i], M.metal), -w / 2 - 0.85 + i * 0.25, 1.35, d / 2 - 0.09));
+    out.push(xf(box(0.72, 0.8, 0.06, "#c43a36", M.glow), -w / 2 - 0.6, 1.25, d / 2 - 0.13));
+    for (let i = 0; i < 3; i++) out.push(xf(box(0.16, 0.26, 0.06, ["#e7c44a", "#4a86c4", "#e25c4a"][i], M.glow), -w / 2 - 0.85 + i * 0.25, 1.35, d / 2 - 0.09));
     out.push(xf(box(1.6, 0.08, 0.4, WOOD_LIGHT), w * 0.2, 0.45, d / 2 + 0.9));
     for (const x of [-0.65, 0.65]) out.push(xf(box(0.07, 0.42, 0.34, WOOD_DARK), w * 0.2 + x, 0.21, d / 2 + 0.9));
     out.push(xf(box(0.5, 0.3, 0.35, "#3a6a9a", M.metal), w * 0.2 + 1.2, 0.15, d / 2 + 0.7));

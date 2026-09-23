@@ -194,7 +194,7 @@ export function stoneLantern(): Geo {
   out.push(xf(cyl(0.09, 0.11, 0.7, STONE, M.stone, 8), 0, 0.49, 0));
   out.push(xf(box(0.42, 0.1, 0.42, STONE, M.stone), 0, 0.89, 0));
   out.push(xf(box(0.3, 0.3, 0.3, "#8d877c", M.stone), 0, 1.09, 0));
-  out.push(xf(box(0.14, 0.14, 0.32, "#2a2622"), 0, 1.09, 0));
+  out.push(xf(box(0.14, 0.14, 0.32, "#2a2622", M.fire), 0, 1.09, 0));
   const cap = prep(new THREE.ConeGeometry(0.36, 0.26, 6), STONE, M.stone);
   cap.translate(0, 1.37, 0);
   out.push(cap);

@@ -73,6 +73,8 @@ export class Birds {
   readonly group = new THREE.Group();
   private readonly birds: Bird[] = [];
   private readonly flocks: Flock[] = [];
+  /** 0…1: share of flocks aloft (time of day thins them toward dusk; the kite leaves below 0.5). */
+  activity = 1;
   private readonly body: THREE.InstancedMesh;
   private readonly wings: THREE.InstancedMesh;
   private readonly r = mulberry32(4242);
@@ -159,7 +161,12 @@ export class Birds {
     const side = new THREE.Vector3(-fz, 0, fx);
 
     // Flocks: respawn off to one side, ahead of the camera, crossing the view.
-    for (const f of this.flocks) {
+    const aloft = Math.round(this.activity * this.flocks.length);
+    for (const [fi, f] of this.flocks.entries()) {
+      if (fi >= aloft) {
+        f.c.set(1e6, 0, 0);
+        continue;
+      }
       if (f.c.distanceTo(cp) > 280) {
         const s = r() > 0.5 ? 1 : -1;
         const ahead = range(r, 70, 170);
@@ -204,6 +211,7 @@ export class Birds {
       } else if (b.kind === "kite") {
         const a = t * 0.17;
         b.pos.set(this.kiteC.x + Math.cos(a) * 42, 78 + Math.sin(a * 0.5) * 4, this.kiteC.z + Math.sin(a) * 42);
+        if (this.activity < 0.5) b.pos.x += 1e6;
         flap = 0.1 + Math.sin(t * 0.9) * 0.05;
         bank = -0.38;
       } else {

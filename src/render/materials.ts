@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { TOD, TOD_GLSL } from "./todUniforms";
 
 /**
  * Every visible surface uses one of the custom toon materials below. They all render into a
@@ -40,6 +41,7 @@ export const G = {
   uSignTex: { value: null as THREE.Texture | null },
   /** Grass parting around her feet when she walks: (x, z, radius, strength). */
   uPush: { value: new THREE.Vector4(0, 0, 0.8, 0) },
+  ...TOD,
 };
 
 export const COMMON = /* glsl */ `
@@ -65,6 +67,7 @@ uniform vec2 uShadowTexel;
 uniform float uShadowRange;
 uniform vec3 uShadowCenter;
 uniform float uShadowHalf;
+${TOD_GLSL}
 
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float hash13(vec3 p3){ p3 = fract(p3 * 0.1031); p3 += dot(p3, p3.zyx + 31.32); return fract((p3.x + p3.y) * p3.z); }
@@ -84,14 +87,20 @@ vec3 skyColor(vec3 dir){
   float h = clamp(dir.y, 0.0, 1.0);
   vec3 col = mix(uSkyHorizon, uSkyMid, smoothstep(0.0, 0.2, h));
   col = mix(col, uSkyZenith, smoothstep(0.14, 0.7, h));
-  float sd = max(dot(dir, uSunDir), 0.0);
-  col += vec3(1.0, 0.8, 0.5) * (pow(sd, 5.0) * 0.16 + pow(sd, 48.0) * 0.3);
+  float sd = max(dot(dir, uSkySun), 0.0);
+  col += uSunGlow * (pow(sd, 5.0) * uSunGlowAmt.x + pow(sd, 48.0) * uSunGlowAmt.y);
+  if (uHorizGlowK.x > 0.0) {
+    // Low sun: the horizon glows warm toward it (sunset band), fading around the sky.
+    float az = dot(normalize(dir.xz + 1e-5), normalize(uSkySun.xz + 1e-5)) * 0.5 + 0.5;
+    col = mix(col, uHorizGlow, clamp(exp(-h * uHorizGlowK.y) * az * az * uHorizGlowK.x, 0.0, 1.0));
+  }
   // Warm aerial haze hugging the horizon.
-  col = mix(col, vec3(0.86, 0.84, 0.72), exp(-h * 26.0) * 0.45);
+  col = mix(col, uHaze, exp(-h * 26.0) * uHazeAmt);
   return col;
 }
 
 vec3 applyFog(vec3 col, vec3 wpos){
+  col = col * uWorldTint + gEmit;
   vec3 d = wpos - cameraPosition;
   float dist = length(d);
   float f = 1.0 - exp(-max(dist - 70.0, 0.0) * uFogDensity);
@@ -456,6 +465,7 @@ void main(){
     float fib = (vnoise(vUv * vec2(40.0, 90.0)) - 0.5) * 0.08 * aaKeep(vUv.y * 90.0);
     base = mix(vec3(0.8, 0.72, 0.53) * (1.0 + fib), vec3(0.08, 0.05, 0.03), frame);
     paint = 0.3;
+    gEmit = vec3(1.0, 0.64, 0.32) * (1.0 - frame) * uNight * step(0.3, hash12(floor(vWPos.xz / 6.0))) * 0.9;
   } else if (mt == 5) {     // glass: dark interior, sky sheen streak, faint warm depth
     float frame = max(aaLine(vUv.x * 3.0, 0.03), aaLine(vUv.y * 2.0, 0.025));
     frame = max(frame, 1.0 - aaStep(0.04, vUv.x) * (1.0 - aaStep(0.96, vUv.x)));
@@ -464,6 +474,7 @@ void main(){
     vec3 glass = vec3(0.03, 0.045, 0.05) + uSkyMid * 0.16 * streak + vec3(0.12, 0.07, 0.03) * (1.0 - vUv.y) * 0.5;
     base = mix(glass, vec3(0.06, 0.04, 0.025), frame);
     paint = 0.2; rim = 0.0;
+    gEmit = vec3(1.0, 0.6, 0.3) * (1.0 - frame) * uNight * step(0.45, hash12(floor(vWPos.xz / 6.0) + 3.1)) * 0.7;
   } else if (mt == 6) {     // grass blades: soft up-facing normals, no ink
     N = normalize(mix(N, vec3(0.0, 1.0, 0.0), 0.7));
     // Cool dense grass: offset the warm sun so lit tips land near the authored #6f9a3e.
@@ -503,6 +514,8 @@ void main(){
     base = sg.rgb * vCol;
     paint = 0.12; rim = 0.3; soft = 0.05;
     if (mt == 24) emis = base * 0.28;
+    // Dusk: lit panels (vending, phone) glow; painted shop signs catch a little lamplight.
+    gEmit = base * uNight * (mt == 24 ? 1.5 : 0.18);
   } else if (mt == 25) {    // plaster: rain streaks under the eaves, grime toward the ground
     vec2 tg = normalize(vec2(-N.z, N.x) + 1e-4);
     float sx = dot(vWPos.xz, tg);
@@ -512,6 +525,7 @@ void main(){
     paint = 0.7;
   } else if (mt == 14) {    // paper lantern (soft, never a lamp in daylight)
     emis = base * 0.18;
+    gEmit = mix(base, vec3(1.0, 0.62, 0.3), 0.5) * uNight * 2.4;
     paint = 0.3;
   } else if (mt == 15) {    // hair: strand highlights
     float s = vnoise(vec2(atan(vObj.x, vObj.z) * 9.0, vObj.y * 3.0));
@@ -530,14 +544,19 @@ void main(){
     if (shade < 0.5 || vWPos.y > 5.0) discard;
     // ~60% coverage (the Kuwahara pass melts the dither into a soft glow).
     if (hash12(floor(gl_FragCoord.xy)) > 0.6) discard;
-    gColor = vec4(vec3(1.0, 0.9, 0.62) * 1.02, 1.0);
+    gColor = vec4(vec3(1.0, 0.9, 0.62) * 1.02 * uWorldTint, 1.0);
     gNormal = vec4(0.5, 0.5, uId / 32.0, -1.0);
     return;
+  } else if (mt == 31) {    // stone-lantern fire box: dark by day, a warm flame at dusk
+    gEmit = vec3(1.0, 0.58, 0.24) * uNight * 2.2;
+  } else if (mt == 30) {    // lamp / vending / sign panel: plain paint by day, lit at night
+    paint = 0.3; rim = 0.5;
+    gEmit = mix(base, vec3(1.0, 0.93, 0.8), 0.35) * uNight * 1.3;
   } else if (mt == 19) {    // painted distant mountains: authored colour, soft top-lit gradient
     float h = clamp(vObj.y / 160.0, 0.0, 1.0);
     vec3 c = base * (0.9 + 0.18 * h) * (0.94 + 0.12 * brush(vWPos * 0.05, N));
     vec3 V = normalize(vWPos - cameraPosition);
-    c = mix(c, skyColor(normalize(vec3(V.x, 0.02, V.z))), 0.25 * (1.0 - h));
+    c = mix(c * uFarTint, skyColor(normalize(vec3(V.x, 0.02, V.z))), 0.25 * (1.0 - h) + uFarHaze * (1.0 - 0.5 * h));
     gColor = vec4(c, 1.0);
     gNormal = vec4(0.5, 0.5, uId / 32.0, uMask);
     return;
@@ -659,7 +678,24 @@ export function skyMaterial(): THREE.ShaderMaterial {
         vec2 p = dir.xz / h * 0.6;
         float w = fbm2(p * vec2(0.5, 2.6) + vec2(uTime * 0.004, 0.0));
         float wisp = smoothstep(0.6, 0.8, w) * smoothstep(0.12, 0.3, dir.y) * (1.0 - smoothstep(0.55, 0.95, dir.y));
-        col = mix(col, vec3(0.95, 0.96, 0.98), wisp * 0.5);
+        col = mix(col, uWisp, wisp * 0.5);
+        float cd = dot(dir, uSkySun);
+        if (cd > 0.9) {
+          // Sun disk with a soft halo (HDR: the bloom pass turns it into a glow).
+          float disk = smoothstep(0.99972, 0.99982, cd);
+          col += uSunDisk * (disk + pow(cd, 1400.0) * 0.45 + pow(cd, 160.0) * 0.1);
+        }
+        if (uStars > 0.0 && dir.y > 0.04) {
+          // Soft painted stars (big enough to survive the paint filter), twinkling slowly.
+          vec2 sp = dir.xz / (1.0 + dir.y) * 70.0;
+          vec2 ci = floor(sp);
+          float hs = hash12(ci);
+          vec2 off = vec2(hash12(ci + 3.1), hash12(ci + 7.7)) * 0.6 + 0.2;
+          float d = length(fract(sp) - off);
+          float tw = 0.65 + 0.35 * sin(uTime * (0.8 + hs * 2.5) + hs * 40.0);
+          float star = step(0.94, hs) * (1.0 - smoothstep(0.03, 0.11 + 0.08 * fract(hs * 17.0), d)) * tw;
+          col += vec3(0.95, 0.95, 1.0) * star * uStars * smoothstep(0.04, 0.3, dir.y) * (1.0 - wisp * 0.8);
+        }
         gColor = vec4(col, 1.0);
         gNormal = vec4(0.5, 0.5, 0.0, 0.0);
       }`,
@@ -690,21 +726,27 @@ export function cloudMaterial(): THREE.ShaderMaterial {
         // Per-lobe shading: each puff is lit like its own ball, blended with the merged normal.
         vec3 N = normalize(mix(normalize(vN), normalize(vL), 0.55));
         float n = vnoise3(vWPos * 0.02) * 0.6 + vnoise3(vWPos * 0.06) * 0.4;
-        float t = dot(N, uSunDir) * 0.5 + 0.5 + (n - 0.5) * 0.3 + (vH - 0.4) * 0.25;
+        float t = dot(N, uSkySun) * 0.5 + 0.5 + (n - 0.5) * 0.3 + (vH - 0.4) * 0.25;
         float lit = smoothstep(0.5, 0.54, t);
         float mid = smoothstep(0.3, 0.34, t);
-        vec3 cTop = vec3(1.0, 0.955, 0.871);  // #fffaf0
-        vec3 cMid = vec3(0.791, 0.799, 0.863); // #e6e7ef
-        vec3 cLow = vec3(0.392, 0.423, 0.597); // #a8aecb
+        vec3 cTop = uCloudTop, cMid = uCloudMid, cLow = uCloudLow;
         // Underside (facing down or low in the cloud) always sits in the cool tone.
         float under = smoothstep(0.15, -0.35, N.y) * (1.0 - smoothstep(0.1, 0.35, vH));
         vec3 col = mix(cLow, cMid, mid);
         col = mix(col, cTop, lit);
         col = mix(col, cLow, under * 0.85);
         vec3 V = normalize(cameraPosition - vWPos);
+        if (uCloudK.z > 0.0) {
+          // Low sun: undersides and low flanks catch warm light, strongest on the sunward side.
+          float sAz = dot(normalize(-V.xz + 1e-5), normalize(uSkySun.xz + 1e-5)) * 0.5 + 0.5;
+          float low = clamp(under + (1.0 - smoothstep(0.0, 0.55, vH)) * 0.6, 0.0, 1.0);
+          col = mix(col, uCloudUnder, uCloudK.z * low * (0.3 + 0.7 * sAz));
+        }
         float fr = pow(1.0 - abs(dot(N, V)), 3.0);
-        float sunSide = smoothstep(-0.2, 0.4, dot(N, uSunDir));
-        col = mix(col, vec3(1.0, 0.96, 0.86), fr * 0.5 * sunSide);   // #fff6e0 rim
+        float sunSide = smoothstep(-0.2, 0.4, dot(N, uSkySun));
+        col = mix(col, uCloudRim, fr * uCloudK.x * sunSide);   // #fff6e0 rim
+        // Backlit silver lining toward a low sun.
+        col += uCloudRim * fr * uCloudK.y * pow(max(dot(-V, uSkySun), 0.0), 3.0);
         vec3 dir = -V;
         col = mix(col, skyColor(dir), smoothstep(0.1, 0.0, dir.y) * 0.7 + 0.05);
         gColor = vec4(col, 1.0);
@@ -805,6 +847,12 @@ export function waterMaterial(): THREE.ShaderMaterial {
         // Sparkle on ripple crests.
         float sp = smoothstep(0.86, 0.95, vnoise(q * 6.0 + uTime * 0.8)) * fres;
         col += vec3(1.0, 0.95, 0.8) * sp * 0.25;
+        if (uGlint > 0.0) {
+          // Low sun on the water: a bright streak toward the sun, broken up by the ripples.
+          float g = max(dot(R, uSkySun), 0.0);
+          float br = 0.3 + 1.7 * smoothstep(0.5, 0.85, vnoise(q * vec2(2.2, 7.0) + vec2(uTime * 0.7, 0.0)));
+          col += uSunDisk * (pow(g, 90.0) * br + pow(g, 12.0) * 0.04) * uGlint;
+        }
 
         // Young rice on a 0.6 x 0.45 m grid: V-shaped three-blade tufts drawn as crossed vertical
         // sheets intersected along the view ray (real parallax, no geometry). The rows nearest the
@@ -911,6 +959,11 @@ export function roadMaterial(): THREE.ShaderMaterial {
         base = mix(base, grass, smoothstep(2.6, 2.95, au + (n - 0.5) * 0.4));
         vec3 N = vec3(0.0, 1.0, 0.0);
         vec3 col = toon(base, N, vWPos, 0.0, 1.0, 0.0, 0.03);
+        if (uNight > 0.0) {
+          // Warm pools under the pole lamps (every 40 m, hanging over the right lane).
+          float dz = mod(vWPos.z + 32.0, 40.0) - 20.0, du = u - 2.8;
+          gEmit = base * vec3(1.0, 0.72, 0.42) * exp(-(du * du * 0.35 + dz * dz * 0.12)) * uNight * 3.0;
+        }
         col = applyFog(col, vWPos);
         writeOut(col, N, uMask * smoothstep(2.6, 3.2, au));
       }`,

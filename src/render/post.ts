@@ -3,6 +3,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
+import { TOD_GRADE } from "./todUniforms";
 
 const FS_VS = /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 
@@ -152,15 +153,16 @@ export class Post {
       vertexShader: FS_VS,
       fragmentShader: /* glsl */ `
         uniform sampler2D tDiffuse; uniform vec2 uRes; uniform float uTime;
+        uniform vec3 uGradeMul; uniform float uSat;
         varying vec2 vUv;
         float h12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
         float vn(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
           return mix(mix(h12(i), h12(i + vec2(1, 0)), u.x), mix(h12(i + vec2(0, 1)), h12(i + vec2(1, 1)), u.x), u.y); }
         vec3 toSRGB(vec3 c){ c = max(c, 0.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
         void main(){
-          vec3 c = texture2D(tDiffuse, vUv).rgb;
+          vec3 c = texture2D(tDiffuse, vUv).rgb * uGradeMul;
           float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-          c = mix(vec3(l), c, 1.05);
+          c = mix(vec3(l), c, uSat);
           // Split tone: cool teal shadows, warm (#fff1d8) highlight lift.
           c *= mix(vec3(0.96, 1.0, 1.04), vec3(1.0, 0.945, 0.85) * 1.04, smoothstep(0.08, 0.75, l));
           // Soft shoulder.
@@ -178,6 +180,7 @@ export class Post {
           gl_FragColor = vec4(clamp(s, 0.0, 1.0), 1.0);
         }`,
     });
+    Object.assign(this.grade.uniforms, TOD_GRADE);
     this.composer.addPass(this.grade);
 
     // SMAA keeps thin lines (wires, lattice, blades) crisp where FXAA smeared them.

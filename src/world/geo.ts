@@ -15,6 +15,10 @@ export const M = {
   sign: 23, signGlow: 24,
   /** White plaster with painted weathering. */
   plaster: 25,
+  /** Panel that glows at night (lamp heads, vending fronts, sign lettering). */
+  glow: 30,
+  /** Stone-lantern fire box: plain dark stone by day, flame-lit at dusk. */
+  fire: 31,
 } as const;
 
 /** Outline groups: lines are drawn where neighbouring pixels belong to different groups. */
