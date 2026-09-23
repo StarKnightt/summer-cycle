@@ -58,9 +58,9 @@ export class WindLayer extends Layer {
   }
 
   params(now: number, s: RideState, e: Env): void {
-    const sp = clamp(s.speed / 10, 0, 1.2);
+    const sp = clamp(s.speed / 10, 0, 1.4);
     const air = 0.2 + 0.8 * e.gust;
-    const flow = sp * sp;
+    const flow = Math.min(sp * sp, 1.8);
     const dir = clamp(s.steer * 0.35 + (vnoise(now / 13, 5) - 0.5) * 0.6, -0.6, 0.6);
     const base = L_WIND * (0.28 * air + flow);
     glide(this.gL.gain, base * (1 - dir * 0.5), now, 0.15);

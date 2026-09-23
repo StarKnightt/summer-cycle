@@ -29,6 +29,10 @@ The game is live on GitHub Pages (public repo StarKnightt/summer-cycle), the Ver
 - [ ] Final critic review (all checkpoints + close-up detail crops vs refs/user_*.jpg, face at riding distance, all 4 times of day, FPS on idle GPU, mark anything unconfirmed)
 - [ ] Code-review pass on the full diff since the last release (blocking issues only)
 - [ ] Fix round for critic/review findings
+  - [x] Review blocker 1: adaptive MSAA measures missed vsync against the detected refresh (no longer "fps < 72"), stays x4 on 60 Hz; MSAA 0 dithers coverage-alpha (see-through spoke blur, leaf fade); SMAA pre-compiled in warm-up
+  - [x] Review blocker 2: riding mouse-look orbit collides (houses, trunks/props, above grass), chest-height floor when facing her from the front
+  - [x] WebGL2 missing / context lost: friendly washi message + Reload; time-of-day blend allocation-free; `fpsLog` capped
+  - [x] Shift sprint while riding (13.5 m/s, faster cadence, FOV +5.5°, pull-back, shake; `sprint` in RiderState for E's standing pose); collision sub-steps 0.1 m, no tunnelling at 13.5 m/s
 - [x] GitHub Pages prep: Actions workflow (pnpm build → deploy-pages), sub-path `/summer-cycle/` verified locally, README live URL
 - [ ] GitHub Pages: make repo public + enable Pages (source: GitHub Actions), re-run workflow, verify live URL
 - [x] Remove vercel.json / .vercelignore from the repo, delete local .vercel/ and .env.local

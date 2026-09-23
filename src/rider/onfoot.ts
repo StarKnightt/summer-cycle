@@ -401,6 +401,42 @@ export class Explore {
     return out;
   }
 
+  /**
+   * Camera clearance: march from `pivot` along unit `dir` up to `dist`, stopping short of houses,
+   * the ground and trunk/prop colliders. Returns the usable distance (>= 1 m).
+   */
+  obstruct(pivot: THREE.Vector3, dir: THREE.Vector3, dist: number): number {
+    const p = this._p;
+    for (let i = 1; i <= 14; i++) {
+      const d = (i / 14) * dist;
+      p.copy(pivot).addScaledVector(dir, d);
+      const u = p.x - roadX(p.z);
+      const roof = houseAt(p.x, p.z, 0.3);
+      const gnd = u >= -4.6 ? groundH(u, canon(p.z)) : -0.1;
+      let hit = (roof > 0 && p.y < roof) || p.y < gnd + 0.25;
+      if (!hit && p.y < 3.2) {
+        for (const ch of this.world.chunks) {
+          const oz = ch.group.position.z;
+          for (const k of ch.colliders)
+            if (k.r >= 0.35 && k.r <= 1.2 && Math.hypot(p.x - k.x, p.z - k.z - oz) < k.r * 0.7 + 0.2) {
+              hit = true;
+              break;
+            }
+          if (hit) break;
+        }
+      }
+      if (hit) return Math.max(1.0, d - 0.35);
+    }
+    return dist;
+  }
+  private readonly _p = new THREE.Vector3();
+
+  /** Lowest camera height at world (x, z): terrain + plant cover + a margin (never in the grass). */
+  camFloor(x: number, z: number): number {
+    const u = x - roadX(z);
+    return (u >= -4.6 ? groundH(u, canon(z)) : -0.1) + coverTop(u) + 0.3;
+  }
+
   private free(x: number, z: number): boolean {
     return groundAt(x - roadX(z), z) !== null && houseAt(x, z, BODY_R) === 0;
   }
@@ -632,31 +668,7 @@ export class Explore {
     const cp = Math.cos(this.oPitch);
     const dir = new THREE.Vector3(Math.sin(this.oYaw) * cp, Math.sin(this.oPitch), Math.cos(this.oYaw) * cp);
     // Pull in ahead of houses, trunks and the ground; ease back out.
-    let lim = this.oDist;
-    const p = new THREE.Vector3();
-    for (let i = 1; i <= 14; i++) {
-      const d = (i / 14) * this.oDist;
-      p.copy(this.pivot).addScaledVector(dir, d);
-      const u = p.x - roadX(p.z);
-      const roof = houseAt(p.x, p.z, 0.3);
-      const gnd = u >= -4.6 ? groundH(u, canon(p.z)) : -0.1;
-      let hit = (roof > 0 && p.y < roof) || p.y < gnd + 0.25;
-      if (!hit && p.y < 3.2) {
-        for (const ch of this.world.chunks) {
-          const oz = ch.group.position.z;
-          for (const k of ch.colliders)
-            if (k.r >= 0.35 && k.r <= 1.2 && Math.hypot(p.x - k.x, p.z - k.z - oz) < k.r * 0.7 + 0.2) {
-              hit = true;
-              break;
-            }
-          if (hit) break;
-        }
-      }
-      if (hit) {
-        lim = Math.max(1.0, d - 0.35);
-        break;
-      }
-    }
+    const lim = this.obstruct(this.pivot, dir, this.oDist);
     this.dCur = lim < this.dCur ? lim : damp(this.dCur, lim, 2.5, dt);
     cam.position.copy(this.pivot).addScaledVector(dir, this.dCur);
     cam.fov = 45;
@@ -665,6 +677,14 @@ export class Explore {
     cam.lookAt(this.pivot.x, this.pivot.y + 0.05, this.pivot.z);
     cam.updateMatrixWorld();
   }
+}
+
+/** Rough height of the plant cover at road offset u (grass verges, rice), for camera clearance. */
+export function coverTop(u: number): number {
+  if (Math.abs(u) < 2.6) return 0;
+  if (u < -4.9) return 0.55;
+  if (u < 7) return 1.1;
+  return 0.8;
 }
 
 const smooth01 = (x: number) => {

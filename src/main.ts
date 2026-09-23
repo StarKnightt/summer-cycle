@@ -12,7 +12,7 @@ import { ChaseCam, type CamMode } from "./rider/camera";
 import { Explore, houseAt } from "./rider/onfoot";
 import { Input } from "./core/input";
 import { RideAudio } from "./audio";
-import { Loader, type Stage } from "./loader";
+import { Loader, fatal, type Stage } from "./loader";
 import { precompile, warmDraws } from "./render/precompile";
 import { leafAtlas } from "./render/leafAtlas";
 import { signAtlas } from "./render/signAtlas";
@@ -29,7 +29,23 @@ const SKIP_INTRO = params.has("skipintro") && params.get("skipintro") !== "0";
 // Loader progress weights (sum 1), proportional to measured build time on a desktop GPU.
 const W_BOOT = 0.03, W_SKY = 0.04, W_PROTOS = 0.05, W_CHUNKS = 0.06, W_RIDER = 0.01, W_COMPILE = 0.15, W_DRAW = 0.6, W_WARM = 0.06;
 
-const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", stencil: false });
+if (!document.createElement("canvas").getContext("webgl2")) {
+  fatal("This browser can't draw the ride", "Summer Cycle needs WebGL 2. Try an up-to-date Chrome, Edge, Firefox or Safari, and check that hardware acceleration is turned on.");
+  throw new Error("WebGL2 unavailable");
+}
+let renderer: THREE.WebGLRenderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", stencil: false });
+} catch (e) {
+  fatal("The graphics couldn't start", "Your browser refused to create a WebGL 2 context. Closing other 3D tabs or restarting the browser usually helps.");
+  throw e;
+}
+renderer.domElement.addEventListener("webglcontextlost", (e) => {
+  e.preventDefault();
+  fatal("The graphics took a break", "The GPU reset or the browser reclaimed the 3D context. Reload to keep riding.");
+});
+// Render targets and programs would all need rebuilding: a clean reload is the reliable path.
+renderer.domElement.addEventListener("webglcontextrestored", () => location.reload());
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.setSize(innerWidth, innerHeight);
 renderer.autoClear = true;
@@ -99,7 +115,63 @@ const post = new Post(renderer, innerWidth, innerHeight, { kuwahara: KUWA, msaa:
 const prof = new Profiler(renderer, params.has("prof"));
 post.prof = prof;
 const MSAA_PINNED = params.has("msaa");
-let msaaStepAt = 0;
+/**
+ * Adaptive AA state. Steps MSAA x4 -> x2 -> 0 (SMAA + dithered coverage) only when frames really
+ * miss the display's refresh: rAF is vsync-locked, so a 60 Hz screen must never read as "slow".
+ */
+const AA = { run: 0, calib: [] as number[], refresh: 0, win: [] as number[], winSum: 0, check: 0, bad: 0, cooldown: 0, log: [] as string[] };
+const REFRESH_HZ = [240, 165, 144, 120, 100, 90, 75, 60, 50];
+function adaptAA(interval: number): void {
+  if (MSAA_PINNED || post.msaa === 0 || !started || waiting || document.hidden || interval > 250) return;
+  AA.run += interval;
+  if (AA.run < 1000) return; // let the first second after the start settle
+  if (!AA.refresh) {
+    AA.calib.push(interval);
+    if (AA.run < 3000) return;
+    // Vsync-locked frames cluster tightly on the refresh interval: if the 10th percentile and the
+    // median agree, snap the median to a standard rate. Otherwise the GPU is the limit (or shared),
+    // so assume the common 60 Hz — a genuinely slow machine must still be able to step down.
+    const s = [...AA.calib].sort((a, b) => a - b);
+    const med = s[Math.floor(s.length / 2)], p10 = s[Math.floor(s.length * 0.1)];
+    const tight = (med - p10) / med < 0.1;
+    const hz = (tight && REFRESH_HZ.find((h) => Math.abs(1000 / h - med) / (1000 / h) < 0.08)) || 60;
+    AA.refresh = 1000 / hz;
+    AA.log.push(`refresh ${hz} Hz (median ${med.toFixed(2)} ms, p10 ${p10.toFixed(2)}${tight ? "" : ", loose -> 60"})`);
+    return;
+  }
+  AA.win.push(interval);
+  AA.winSum += interval;
+  while (AA.winSum > 3000) AA.winSum -= AA.win.shift()!;
+  AA.cooldown -= interval;
+  AA.check += interval;
+  if (AA.check < 1000) return;
+  AA.check = 0;
+  // A faster display than assumed (frames steadily quicker than the refresh): adopt it.
+  if (AA.win.length > 30) {
+    const s = [...AA.win].sort((a, b) => a - b);
+    const med = s[Math.floor(s.length / 2)], p10 = s[Math.floor(s.length * 0.1)];
+    const hz = REFRESH_HZ.find((h) => Math.abs(1000 / h - med) / (1000 / h) < 0.08);
+    if (hz && (med - p10) / med < 0.1 && 1000 / hz < AA.refresh * 0.9) {
+      AA.refresh = 1000 / hz;
+      AA.log.push(`refresh -> ${hz} Hz`);
+    }
+  }
+  if (AA.cooldown > 0) return;
+  // Missing vsync: over 20% of the last 3 s of frames took > 1.25x the refresh interval (never
+  // shorter than the 75 fps floor), on two consecutive checks.
+  const limit = Math.max(AA.refresh, 1000 / 75) * 1.25;
+  const over = AA.win.filter((d) => d > limit).length / AA.win.length;
+  AA.bad = over > 0.2 ? AA.bad + 1 : 0;
+  if (AA.bad >= 2) {
+    const n = post.msaa > 2 ? 2 : 0;
+    AA.log.push(`t=${t.toFixed(1)}s: ${Math.round(over * 100)}% frames > ${limit.toFixed(1)} ms -> msaa ${n}`);
+    post.setMsaa(n);
+    AA.bad = 0;
+    AA.cooldown = 6000;
+    AA.win.length = 0;
+    AA.winSum = 0;
+  }
+}
 // T cycles afternoon → golden → sunset → dusk; ?time=… picks one, &timelapse=1 sets the sun over 40 s.
 const tod = new TimeOfDay(post, shadow, params);
 {
@@ -138,6 +210,7 @@ const hud = document.getElementById("hud")!;
 if (AUTOPLAY || params.has("nohud")) hud.style.display = "none";
 // F = get off and explore on foot / get back on; C = cinematic ride cameras.
 const explore = new Explore(world, rider, ctl, chase, audio, renderer.domElement, !(AUTOPLAY || params.has("nohud")));
+chase.clear = explore;
 // Mouse look: the "to ride" click captures the pointer; a canvas click re-captures it after Esc.
 // Autoplay keeps its scripted camera and never captures.
 chase.mouseLook = !AUTOPLAY;
@@ -221,7 +294,8 @@ let warm = 0;
 /** Intro mode: the finished frame waits (clock frozen, loop idle) behind the loader for a gesture. */
 let waiting = false;
 function frame(now: number) {
-  let dt = (now - last) / 1000;
+  const interval = now - last;
+  let dt = interval / 1000;
   last = now;
   if (dt > 0.1) dt = 0.1;
   if (warm < WARM_FRAMES) {
@@ -239,7 +313,7 @@ function frame(now: number) {
 
   if (explore.bikeActive) {
     // Sub-step so a frame hitch can never tunnel the bike through a thin obstacle.
-    const steps = Math.max(1, Math.ceil((Math.abs(ctl.speed) * dt) / 0.15));
+    const steps = Math.max(1, Math.ceil((Math.abs(ctl.speed) * dt) / 0.1));
     let bumpMax = 0;
     for (let i = 0; i < steps; i++) {
       ctl.update(dt / steps, input, bikeContact);
@@ -275,6 +349,7 @@ function frame(now: number) {
       pedaling: onFoot ? 0 : ctl.pedaling,
       time: t,
       kick: explore.kick,
+      sprint: onFoot ? 0 : ctl.sprint,
     },
     onFoot ? explore.foot : undefined,
   );
@@ -341,21 +416,15 @@ function frame(now: number) {
   if (fpsT >= 1) {
     fps = frames / fpsT;
     fpsLog.push(Math.round(fps));
-    // Adaptive AA: MSAA x4 while the GPU keeps up; step down (x2, then SMAA only) if a
-    // 3-second window stays under the frame target. Pinned with ?msaa=N.
-    if (!MSAA_PINNED && fpsLog.length > 3 && fpsLog.length - msaaStepAt >= 3) {
-      const last = fpsLog.slice(-3).reduce((a, c) => a + c, 0) / 3;
-      if (last < 72 && post.msaa > 0) {
-        post.setMsaa(post.msaa > 2 ? 2 : 0);
-        msaaStepAt = fpsLog.length;
-      }
-    }
+    if (fpsLog.length > 3600) fpsLog.splice(0, fpsLog.length - 3600);
     frames = 0;
     fpsT = 0;
   }
+  adaptAA(interval);
   if (!started) bootLog.push([`warm${warm}`, Math.round(performance.now() - now)]);
   if (warm === WARM_FRAMES && !started) {
     started = true;
+    post.warmSmaa();
     bootLog.push(["total", Math.round(performance.now() - bootT0)]);
     if (SKIP_INTRO) loader.remove();
     else {
@@ -393,6 +462,16 @@ window.__ride = {
   birds,
   prof,
   world,
+  get aaLog() {
+    return AA.log;
+  },
+  get sprint() {
+    return { held: input.sprint, k: ctl.sprint, speed: ctl.speed };
+  },
+  /** Test hook: hold/release Shift-sprint. */
+  setSprint(v: boolean) {
+    input.sprint = v;
+  },
   get msaa() {
     return post.msaa;
   },

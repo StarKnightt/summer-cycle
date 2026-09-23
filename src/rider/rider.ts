@@ -338,6 +338,8 @@ export interface RiderState {
   time: number;
   /** 0 folded … 1 kickstand down (parked). */
   kick?: number;
+  /** 0..1 smoothed sprint (Shift while riding), for a standing-pedal pose. */
+  sprint?: number;
 }
 
 /** On-foot animation input. The body lives under `walker` whenever blend > 0. */

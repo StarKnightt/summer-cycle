@@ -6,6 +6,8 @@ import type { Contact } from "../world/chunks";
 
 const CRUISE = 6.0;
 const MAX = 10.5;
+/** Top speed while sprinting (Shift). */
+export const SPRINT_MAX = 13.5;
 const GEAR = 2.3; // wheel revolutions per crank revolution
 const BACK = 0.8; // walking the bike backward, m/s
 /** Opening frame: house cluster in the right third, big cumulus + paddy fence on the left. */
@@ -24,6 +26,8 @@ export class Controller {
   wheel = 0;
   crank = 0;
   pedaling = 1;
+  /** 0..1 smoothed sprint (Shift): higher top speed, harder push, faster cadence, more lean. */
+  sprint = 0;
   time = 0;
   braking = false;
   /** 0..1 smoothed brake pressure (for the audio). */
@@ -69,6 +73,11 @@ export class Controller {
       steerIn = (input.left ? 1 : 0) - (input.right ? 1 : 0);
     }
 
+    // Sprint: Shift (with or without W) pushes toward SPRINT_MAX; releasing lets the cap sink back
+    // with the smoothed value, so she eases down to cruise instead of snapping.
+    const wantSprint = input.sprint && !this.hold && !brake && this.speed >= 0;
+    this.sprint = damp(this.sprint, wantSprint ? 1 : 0, wantSprint ? 2.5 : 0.9, dt);
+    const cap = MAX + (SPRINT_MAX - MAX) * this.sprint;
     // Speed: pedal to accelerate, drift back to cruise, brake to stop; holding S at a standstill
     // walks the bike backward at ~0.8 m/s.
     const tgt = CRUISE;
@@ -78,14 +87,16 @@ export class Controller {
       if (this.speed > 0.05) this.speed = Math.max(0, this.speed - 4.2 * dt);
       else this.speed = damp(this.speed, -BACK, 4, dt);
     } else if (this.speed < 0) this.speed = Math.min(0, this.speed + 3 * dt);
+    else if (wantSprint) this.speed += 3.4 * clamp((SPRINT_MAX - this.speed) / 3, 0.12, 1) * dt;
+    else if (this.speed > MAX) this.speed = Math.max(MAX, Math.min(this.speed, cap) - 0.6 * dt);
     else if (throttle > 0) this.speed += (this.autoplay ? 1.0 : 1.7) * throttle * dt * (1 - this.speed / (MAX + 1));
     else if (this.autoplay && this.coastT) this.speed -= 0.25 * dt;
     else if (this.speed < tgt) this.speed += 0.9 * dt;
     else this.speed -= 0.35 * dt;
-    this.speed = clamp(this.speed, -BACK, MAX);
+    this.speed = clamp(this.speed, -BACK, Math.max(cap, MAX));
     this.braking = (!!brake || this.hold) && this.speed > 0.05;
     this.brakePressure = damp(this.brakePressure, this.braking ? 1 : 0, 10, dt);
-    const wantPedal = !brake && !this.hold && this.speed >= 0 && (throttle > 0 || (!this.coastT && this.speed <= tgt + 0.05)) ? 1 : 0;
+    const wantPedal = !brake && !this.hold && this.speed >= 0 && (throttle > 0 || wantSprint || (!this.coastT && this.speed <= tgt + 0.05)) ? 1 : 0;
     this.pedaling = damp(this.pedaling, wantPedal, 5, dt);
 
     // Steering → yaw rate via bicycle kinematics; less authority at speed for smoothness.
@@ -145,15 +156,21 @@ export class Controller {
       this.z = nz;
     }
 
-    this.lean = damp(this.lean, clamp(Math.atan((this.speed * this.yawRate) / 9.81) * 1.4, -0.4, 0.4), 5, dt);
+    const lk = 1.4 * (1 + 0.25 * this.sprint), lmax = 0.4 + 0.06 * this.sprint;
+    this.lean = damp(this.lean, clamp(Math.atan((this.speed * this.yawRate) / 9.81) * lk, -lmax, lmax), 5, dt);
     const dist = this.speed * dt;
     this.wheel += dist / BIKE.WHEEL_R;
-    this.crank += ((dist / BIKE.WHEEL_R) / GEAR) * this.pedaling;
+    this.crank += ((dist / BIKE.WHEEL_R) / this.gear) * this.pedaling;
+  }
+
+  /** Effective gear: sprinting spins the cranks ~15% faster per wheel turn (higher cadence). */
+  private get gear(): number {
+    return GEAR * (1 - 0.13 * this.sprint);
   }
 
   /** Crank revolutions per second while pedalling, wheel revs/s otherwise. */
   get cadence(): number {
-    return (this.speed / (2 * Math.PI * BIKE.WHEEL_R)) / GEAR;
+    return (this.speed / (2 * Math.PI * BIKE.WHEEL_R)) / this.gear;
   }
   get wheelRate(): number {
     return this.speed / (2 * Math.PI * BIKE.WHEEL_R);

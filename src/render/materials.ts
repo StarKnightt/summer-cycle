@@ -39,6 +39,8 @@ export const G = {
   uLeafTex: { value: null as THREE.Texture | null },
   /** Street signage atlas (see signAtlas.ts). */
   uSignTex: { value: null as THREE.Texture | null },
+  /** 1 while the scene pass has no MSAA: coverage-alpha surfaces dither instead (see writeOut). */
+  uDither: { value: 0 },
   /** Grass parting around her feet when she walks: (x, z, radius, strength). */
   uPush: { value: new THREE.Vector4(0, 0, 0.8, 0) },
   ...TOD,
@@ -59,6 +61,7 @@ uniform vec2 uWindDir;
 uniform float uNoFringe;
 uniform sampler2D uLeafTex;
 uniform sampler2D uSignTex;
+uniform float uDither;
 uniform vec4 uPush;
 uniform sampler2D uShadowMap;
 uniform mat4 uShadowMat;
@@ -213,7 +216,15 @@ uniform float uMask;
 // Coverage for alpha-cut cards: with MSAA + alphaToCoverage this becomes a per-sample mask, so
 // blade and leaf edges resolve smoothly instead of crawling as the camera moves.
 float gAlpha = 1.0;
+// Without MSAA, alpha-to-coverage has a single sample and turns partial alpha fully opaque
+// (spoke blur disc, near leaf cards). Then a screen-fixed 4x4 ordered dither stands in for it.
+const float BAYER4[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
 void writeOut(vec3 col, vec3 wN, float mask){
+  if (uDither > 0.5 && gAlpha < 0.999) {
+    ivec2 q = ivec2(gl_FragCoord.xy) & 3;
+    if (gAlpha * 16.0 <= BAYER4[q.y * 4 + q.x] + 0.5) discard;
+    gAlpha = 1.0;
+  }
   vec3 vn = normalize((viewMatrix * vec4(wN, 0.0)).xyz);
   gColor = vec4(col, gAlpha);
   gNormal = vec4(vn.xy * 0.5 + 0.5, uId / 32.0, mask);

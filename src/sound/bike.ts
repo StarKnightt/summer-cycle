@@ -141,7 +141,7 @@ export class BikeLayer extends Layer {
   }
 
   params(now: number, s: RideState): void {
-    const sp = clamp(s.speed / 10, 0, 1.2);
+    const sp = clamp(s.speed / 10, 0, 1.4);
     const grain = 0.85 + 0.3 * vnoise(this.dist / 7, 3);
     this.tyre.set(L_TYRE * Math.pow(sp, 1.2) * grain * (1 + 0.4 * s.roughness), now, 0.08);
     glideStep(this.tyreLP.frequency, 220 + 900 * sp, now, 0.1);

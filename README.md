@@ -27,13 +27,14 @@ Pushing to `master` deploys to GitHub Pages via `.github/workflows/pages.yml`.
 | W / ↑ | Pedal harder (she cruises on her own) |
 | S / ↓ | Brake; hold at a standstill to walk the bike backward |
 | A / ← , D / → | Steer |
+| Shift (hold) | Sprint: up to ~49 km/h (13.5 m/s) instead of ~38, with faster pedalling and a wider camera; works with or without W, eases back to cruise on release |
 | V | Toggle third-person / first-person camera (from a cinematic shot: straight to first person) |
 | C | Cinematic ride cameras: chase → front tracking shot (her face) → side tracking shot → chase |
 | F | Get off and explore on foot (brakes to a stop first); next to the bike, get back on |
 | T | Time of day: afternoon → golden hour → sunset → dusk → afternoon (smooth ~3.6 s transition) |
 | B | Ring the bell |
 | M | Mute / unmute |
-| Mouse | Look around: orbit the chase camera around her (±150°), or turn her head in first person (±100°, ±45° up/down); eases back after ~1.5 s idle. Cinematic C shots ignore it |
+| Mouse | Look around: orbit the chase camera around her (±150°), or turn her head in first person (±100°, ±45° up/down); eases back after ~1.5 s idle. The orbit stays above the grass and pulls in ahead of houses, trees and props. Cinematic C shots ignore it |
 
 The click that dismisses the loader captures the mouse (if you started with a key, click the
 scene once). Esc releases it; click the scene to capture it again. Autoplay never captures the

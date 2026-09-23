@@ -71,7 +71,7 @@ export class Loader {
     this.show("click or press any key to ride", true);
     const hint = this.el.querySelector<HTMLElement>(".hint");
     const auto = new URLSearchParams(location.search).has("autoplay");
-    if (hint && !auto) hint.innerHTML = "<b>W</b> pedal &nbsp;·&nbsp; <b>A D</b> steer &nbsp;·&nbsp; <b>S</b> brake &nbsp;·&nbsp; <b>V</b> view &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>B</b> bell";
+    if (hint && !auto) hint.innerHTML = "<b>W</b> pedal &nbsp;·&nbsp; <b>Shift</b> sprint &nbsp;·&nbsp; <b>A D</b> steer &nbsp;·&nbsp; <b>S</b> brake &nbsp;·&nbsp; <b>V</b> view &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>B</b> bell";
   }
 
   /** Watercolour dissolve: holes bloom outward from the middle through the paper, pigment pooling at the edges. */
@@ -216,4 +216,34 @@ function vnoise(x: number, y: number): number {
 
 function fbm(x: number, y: number): number {
   return vnoise(x, y) * 0.55 + vnoise(x * 2.1 + 5.2, y * 2.1 + 1.3) * 0.3 + vnoise(x * 4.3 + 9.1, y * 4.3 + 7.7) * 0.15;
+}
+
+/**
+ * Friendly full-screen notice for unrecoverable graphics problems (no WebGL2, lost context), in
+ * the loader's washi style, with a Reload button. Safe to call before or after the loader is gone.
+ */
+export function fatal(title: string, detail: string): void {
+  if (document.getElementById("fatal")) return;
+  const el = document.createElement("div");
+  el.id = "fatal";
+  el.setAttribute("role", "alert");
+  el.style.cssText =
+    "position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;" +
+    "background:radial-gradient(ellipse at 50% 40%,#f6efdd 0%,#efe3c8 70%,#e6d6b6 100%);color:#2f3944;text-align:center;padding:24px;" +
+    'font-family:"Palatino Linotype",Palatino,Georgia,serif;';
+  const h = document.createElement("h2");
+  h.textContent = title;
+  h.style.cssText = "margin:0;font-weight:400;font-size:28px;letter-spacing:0.08em;";
+  const p = document.createElement("p");
+  p.textContent = detail;
+  p.style.cssText = "margin:0;max-width:520px;font-size:16px;line-height:1.6;color:#6d675d;font-style:italic;";
+  const b = document.createElement("button");
+  b.textContent = "Reload";
+  b.style.cssText =
+    "margin-top:8px;padding:8px 26px;border:1px solid #9a8f7d;border-radius:18px;background:#f8f1e2;color:#2f3944;" +
+    "font:inherit;font-size:15px;letter-spacing:0.12em;cursor:pointer;";
+  b.addEventListener("click", () => location.reload());
+  el.append(h, p, b);
+  document.body.appendChild(el);
+  if (document.pointerLockElement) document.exitPointerLock();
 }

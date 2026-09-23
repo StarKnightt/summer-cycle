@@ -4,6 +4,7 @@ import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
 import { TOD_GRADE } from "./todUniforms";
+import { G } from "./materials";
 import type { Profiler } from "./profiler";
 
 const FS_VS = /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
@@ -215,6 +216,14 @@ export class Post {
     this.composer.addPass(this.sharpen);
   }
 
+  /** Compile the SMAA programs up front, so a later step down to SMAA doesn't hitch mid-ride. */
+  warmSmaa(): void {
+    const was = this.smaa.enabled;
+    this.smaa.enabled = true;
+    this.composer.render();
+    this.smaa.enabled = was;
+  }
+
   /** Keep depth linearisation in sync with the camera (FPP uses a much smaller near plane). */
   setNear(n: number): void {
     this.ink.uniforms.uNear.value = n;
@@ -250,7 +259,9 @@ export class Post {
     const rd = this.renderer;
     rd.setRenderTarget(this.mrt);
     rd.clear();
+    G.uDither.value = this.mrt.samples === 0 ? 1 : 0;
     rd.render(scene, camera);
+    G.uDither.value = 0;
     pf?.end("scene", this.renderer);
     this.sceneCalls = this.renderer.info.render.calls - c0;
     this.sceneTris = this.renderer.info.render.triangles - t0;

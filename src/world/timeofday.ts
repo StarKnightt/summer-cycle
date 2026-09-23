@@ -116,14 +116,24 @@ function snapshotAfternoon(post: Post): Look {
   };
 }
 
-function mix(a: Look, b: Look, k: number): Look {
-  const out = {} as Record<string, unknown>;
+/** a→b by k, written into `out` (reused every frame: no per-frame allocation). */
+function mix(a: Look, b: Look, k: number, out: Look): Look {
+  const o = out as unknown as Record<string, number | RGB>;
   for (const key of Object.keys(a) as (keyof Look)[]) {
     const x = a[key], y = b[key];
-    out[key] = Array.isArray(x) ? x.map((v, i) => v + ((y as RGB)[i] - v) * k) : (x as number) + ((y as number) - (x as number)) * k;
+    if (Array.isArray(x)) {
+      const r = o[key] as RGB, yy = y as RGB;
+      for (let i = 0; i < 3; i++) r[i] = x[i] + (yy[i] - x[i]) * k;
+    } else o[key] = (x as number) + ((y as number) - (x as number)) * k;
   }
-  return out as unknown as Look;
+  return out;
 }
+
+const cloneLook = (l: Look): Look => {
+  const o = { ...l } as unknown as Record<string, number | RGB>;
+  for (const k in o) if (Array.isArray(o[k])) o[k] = [...(o[k] as RGB)] as RGB;
+  return o as unknown as Look;
+};
 
 const dirFrom = (v: THREE.Vector3, azDeg: number, elDeg: number) => {
   const a = azDeg * DEG, e = elDeg * DEG;
@@ -143,6 +153,10 @@ export class TimeOfDay {
   private cur: Look;
   private lapse: boolean;
   private lapseT = 0;
+  /** Scratch look the transitions/timelapse blend into. */
+  private readonly blend: Look;
+  private lapseDone = false;
+  private dirty = true;
   private readonly shadowDir = new THREE.Vector3();
 
   constructor(private post: Post, private shadow: SunShadow, params: URLSearchParams) {
@@ -152,6 +166,7 @@ export class TimeOfDay {
     const start = PRESETS.indexOf((params.get("time") ?? "afternoon") as Preset);
     this.idx = start < 0 ? 0 : start;
     this.cur = this.from = this.to = this.looks[this.idx];
+    this.blend = cloneLook(this.looks[0]);
     this.lapse = params.has("timelapse") && params.get("timelapse") !== "0";
     if (this.lapse) this.idx = 0;
     this.apply(this.lapse ? this.looks[0] : this.cur);
@@ -181,33 +196,45 @@ export class TimeOfDay {
   set(p: Preset, instant = false): void {
     this.lapse = false;
     this.idx = PRESETS.indexOf(p);
-    this.from = this.cur;
+    // `cur` may be the scratch blend: freeze a copy as the start of the new transition.
+    this.from = cloneLook(this.cur);
     this.to = this.looks[this.idx];
     this.k = instant ? 1 : 0;
     if (instant) this.cur = this.to;
+    this.dirty = true;
   }
 
   /** Continuous 0…3 position along afternoon → golden → sunset → dusk. */
   private along(s: number): Look {
     const i = Math.min(2, Math.floor(s));
     const f = s - i;
-    return mix(this.looks[i], this.looks[i + 1], f * f * (3 - 2 * f) * 0.35 + f * 0.65);
+    return mix(this.looks[i], this.looks[i + 1], f * f * (3 - 2 * f) * 0.35 + f * 0.65, this.blend);
   }
 
   update(dt: number): void {
-    if (this.lapse) {
+    if (this.lapse && !this.lapseDone) {
       // Hold the afternoon a moment, then the sun sets steadily; linger on the sunset glow.
       this.lapseT += dt;
       const x = Math.min(1, Math.max(0, (this.lapseT - 2) / (TIMELAPSE - 4)));
       const s = x < 0.7 ? (x / 0.7) * 2.1 : 2.1 + ((x - 0.7) / 0.3) * 0.9;
       this.cur = this.along(Math.min(3, s));
       this.idx = Math.min(3, Math.round(s));
+      if (x >= 1) {
+        // Settled on dusk: nothing more to blend (the scratch look stops changing).
+        this.lapseDone = true;
+        this.cur = this.looks[3];
+      }
+      this.dirty = true;
     } else if (this.k < 1) {
       this.k = Math.min(1, this.k + dt / TRANSITION);
       const e = this.k * this.k * (3 - 2 * this.k);
-      this.cur = mix(this.from, this.to, e);
+      this.cur = this.k >= 1 ? this.to : mix(this.from, this.to, e, this.blend);
+      this.dirty = true;
     }
-    this.apply(this.cur);
+    if (this.dirty) {
+      this.apply(this.cur);
+      this.dirty = false;
+    }
   }
 
   private apply(l: Look): void {

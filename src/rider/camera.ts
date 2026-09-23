@@ -48,7 +48,14 @@ interface Polar {
  * a first-person view at her eye point. V toggles; `fpp` is the blend target (0 = TPP, 1 = FPP).
  * C cycles cinematic tracking shots; every switch swings around her on an arc (never through her).
  */
+const _pv = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+
 export class ChaseCam {
+  /** Clearance queries for the mouse-look orbit (the on-foot explorer provides them). */
+  clear: { obstruct(p: THREE.Vector3, dir: THREE.Vector3, dist: number): number; camFloor(x: number, z: number): number } | null = null;
+  private capD = 1e9;
+  private fast = 0;
   readonly cam: THREE.PerspectiveCamera;
   mode: CamMode = "chase";
   fpp = 0;
@@ -176,7 +183,12 @@ export class ChaseCam {
     const bx = Math.sin(this.yaw), bz = Math.cos(this.yaw);
     const cxr = Math.cos(this.yaw), czr = -Math.sin(this.yaw);
     const sway = Math.sin(t * 0.7) * 0.05 + Math.sin(t * 1.9) * 0.015;
-    const bob = Math.sin(t * 1.1) * 0.025;
+    // Speed feel above cruise: FOV opens, the chase drops back a little, a faint shake near the top.
+    this.fast = damp(this.fast, clamp((Math.abs(c.speed) - 9.5) / 4, 0, 1), 2, dt);
+    const fs = this.fast * this.fast * (3 - 2 * this.fast);
+    const shake = (Math.sin(t * 23.1) + Math.sin(t * 31.7 + 1.3)) * 0.006 * fs * fs;
+    const bob = Math.sin(t * 1.1) * 0.025 + shake;
+    const back = 4.2 + 0.4 * fs;
     if (this.pending && this.blend < 0.02) {
       const m = this.pending;
       this.pending = null;
@@ -187,9 +199,10 @@ export class ChaseCam {
     let tl: THREE.Vector3;
     let hard = this.mode !== "chase";
     const head = rider.eyeWorld(new THREE.Vector3());
-    let fov = TPP_FOV;
+    const chaseFov = TPP_FOV + 5.5 * fs;
+    let fov = chaseFov;
     // Chase steady state (also the target of arcs back into the chase cam).
-    const chaseP = () => new THREE.Vector3(c.x + bx * 4.2 + cxr * (sway + 0.35), 1.5 + bob, c.z + bz * 4.2 + czr * (sway + 0.35));
+    const chaseP = () => new THREE.Vector3(c.x + bx * back + cxr * (sway + 0.35), 1.5 + bob, c.z + bz * back + czr * (sway + 0.35));
     const chaseL = () => new THREE.Vector3(c.x + fx * 7 + cxr * 1.9, 1.25, c.z + fz * 7 + czr * 1.9);
     // Bike-frame polar ↔ world, in the smoothed heading (so tracking shots glide through bends).
     const sfx = -bx, sfz = -bz;
@@ -289,7 +302,7 @@ export class ChaseCam {
         p.z -= (fz * v) / 4.5;
         l.x -= (fx * v) / 6;
         l.z -= (fz * v) / 6;
-        to = toPolar(p, l, TPP_FOV);
+        to = toPolar(p, l, chaseFov);
       }
       let a1 = to.az;
       while (a1 > tr.from.az) a1 -= Math.PI * 2;
@@ -361,6 +374,20 @@ export class ChaseCam {
       // Looking down from above: aim nearer her so she stays in frame.
       lT.lerp(pv, clamp(Math.abs(this.lPitchS) / 0.6, 0, 1) * 0.85);
     }
+    // Orbit collision: stay above the grass, keep a modest height when swinging round in front of
+    // her, and pull in ahead of houses / trunks / props (easing back out), like the on-foot camera.
+    if (this.clear && (Math.abs(this.lYawS) > 1e-3 || Math.abs(this.lPitchS) > 1e-3)) {
+      const pv = _pv.set(c.x, 1.2, c.z);
+      const front = clamp((Math.abs(this.lYawS) - 1.2) / 0.8, 0, 1);
+      pT.y = Math.max(pT.y, this.clear.camFloor(pT.x, pT.z), 1.2 + 0.2 * front * front * (3 - 2 * front));
+      const dir = _dir.subVectors(pT, pv);
+      const dist = dir.length();
+      dir.divideScalar(Math.max(dist, 1e-4));
+      const lim = this.clear.obstruct(pv, dir, dist);
+      this.capD = lim < this.capD ? lim : damp(this.capD, lim, 2.5, dt);
+      pT.copy(pv).addScaledVector(dir, Math.min(dist, this.capD));
+      lT.y = Math.max(lT.y, 0.8);
+    } else this.capD = 1e9;
     // TPP orientation.
     this.m4.lookAt(pT, lT, new THREE.Vector3(0, 1, 0));
     this.qT.setFromRotationMatrix(this.m4);
